@@ -1,0 +1,138 @@
+# ═══════════════════════════════════════════════════════════════
+#  ChromaWars – Zprávy
+#  Podporované formáty: MiniMessage + &#RRGGBB legacy HEX
+# ═══════════════════════════════════════════════════════════════
+
+prefix: "<gray>[<gradient:&#FF4444:&#4477FF>ChromaWars</gradient>]</gray> "
+
+# ───────────────────────────────────────────────────────────────
+#  ADMIN / PŘÍKAZY
+# ───────────────────────────────────────────────────────────────
+admin:
+  no-permission:      "<red>Nemáš oprávnění pro tento příkaz.</red>"
+  player-not-found:   "<red>Hráč '<player>' nebyl nalezen.</red>"
+  elo-add:            "<green>Hráči <player> bylo přidáno <amount> ELO (nové: <value>).</green>"
+  elo-set:            "<green>ELO hráče <player> nastaveno na <value>.</green>"
+  elo-remove:         "<green>Hráči <player> bylo odebráno <amount> ELO (nové: <value>).</green>"
+  elo-reset:          "<green>ELO hráče <player> bylo resetováno na výchozí (<value>).</green>"
+  lobby-set:          "<green>✔ Lobby pozice uložena.</green>"
+  wand-given:         "<yellow>✦ Dostal jsi <white>Chroma Wand</white>. L-klik = Pos1, P-klik = Pos2.</yellow>"
+  arena-created:      "<green>✔ Aréna '<white><arena></white>' vytvořena.</green>"
+  arena-deleted:      "<red>✖ Aréna '<arena>' smazána.</red>"
+  arena-saved:        "<green>✔ Hranice arény '<arena>' uloženy (<blocks> bloků).</green>"
+  arena-not-found:    "<red>Aréna '<arena>' neexistuje.</red>"
+  arena-exists:       "<red>Aréna '<arena>' již existuje.</red>"
+  pos1-set:           "<aqua>Pos1 → <x>, <y>, <z></aqua>"
+  pos2-set:           "<aqua>Pos2 → <x>, <y>, <z></aqua>"
+  not-in-edit-session: "<red>Nejsi v edit session. Použij /chroma arena edit <name>.</red>"
+  edit-session-start: "<yellow>Edit session pro '<arena>' zahájena. Nastav Pos1/Pos2 a ulož přes /chroma arena save.</yellow>"
+  invalid-value:      "<red>Neplatná hodnota. Zadej celé číslo větší než 0.</red>"
+  usage-elo:          "<red>Použití: /elo <add|set|remove|reset> <hráč> [hodnota]</red>"
+  usage-chroma:       "<red>Použití: /chroma <setlobby|wand|arena> ...</red>"
+  reload-done:        "<green>✔ Konfigurace znovu načtena.</green>"
+
+# ───────────────────────────────────────────────────────────────
+#  LOBBY
+# ───────────────────────────────────────────────────────────────
+lobby:
+  join:           "<green>Připojil ses do lobby!</green>"
+  countdown:      "<yellow>Hra začíná za <time> sekund!</yellow>"
+  countdown-soon: "<bold><red>Hra začíná za <time>!</red></bold>"
+  waiting:        "<yellow>Čekáme na hráče... (<current>/<min>)</yellow>"
+  team-join:      "{team_color}Přidal ses k týmu {team}."
+  team-full:      "<red>Tým {team} je plný ({max} hráčů).</red>"
+  team-already:   "<yellow>Již jsi v týmu {team}.</yellow>"
+  random-team:    "{team_color}Byl jsi přiřazen do týmu {team}."
+  not-in-lobby:   "<red>Tento příkaz lze použít pouze v lobby.</red>"
+  already-in-game: "<red>Již jsi ve hře.</red>"
+
+# ───────────────────────────────────────────────────────────────
+#  HLASOVÁNÍ O MAPĚ
+# ───────────────────────────────────────────────────────────────
+vote:
+  registered:    "<green>✔ Tvůj hlas pro '<map>' byl zaregistrován.</green>"
+  already-voted: "<yellow>Již jsi hlasoval. Tvůj hlas: '<map>'.</yellow>"
+  changed:       "<green>✔ Tvůj hlas byl změněn na '<map>'.</green>"
+  no-arenas:     "<red>Nejsou dostupné žádné arény.</red>"
+  result:        "<gold>Vybrána mapa: <white><map></white> (<votes> hlasů).</gold>"
+
+# ───────────────────────────────────────────────────────────────
+#  HRA – PRŮBĚH
+# ───────────────────────────────────────────────────────────────
+game:
+  start-title:
+    title:    "<bold><gradient:&#FF4444:&#4477FF>CHROMAWARS!</gradient></bold>"
+    subtitle: "<gray>Obarvi co nejvíce plochy!</gray>"
+    fade-in:  10
+    stay:     60
+    fade-out: 20
+
+  end-title:
+    win:
+      title:    "<bold>{team_color}{team} vítězí!</bold>"
+      subtitle: "<gray>Obsazeno: <percent>%</gray>"
+    draw:
+      title:    "<bold><gray>Remíza!</gray></bold>"
+      subtitle: "<gray>Čas vypršel</gray>"
+    fade-in:  10
+    stay:     80
+    fade-out: 20
+
+  countdown-title:
+    title:    "<bold><yellow>{time}</yellow></bold>"
+    subtitle: ""
+    fade-in:  0
+    stay:     25
+    fade-out: 5
+
+  elo-gain:     "<green>+<amount> ELO <gray>(celkem: <total>)</gray></green>"
+  elo-loss:     "<red>-<amount> ELO <gray>(celkem: <total>)</gray></red>"
+  win-broadcast: "<bold>{team_color}{team}</bold><gold> obsadili </gold><bold><percent>%</bold><gold> arény a vítězí!</gold>"
+  time-warning: "<yellow>⚠ Zbývá <time> sekund!</yellow>"
+  not-enough-players: "<yellow>Nedostatek hráčů pro start (min. <min>).</yellow>"
+
+# ───────────────────────────────────────────────────────────────
+#  SMRT / RESPAWN
+# ───────────────────────────────────────────────────────────────
+death:
+  spectator-title:
+    title:    "<bold><red>✖ Zemřel jsi!</red></bold>"
+    subtitle: "<gray>Respawn za <time>s...</gray>"
+    fade-in:  5
+    stay:     40
+    fade-out: 5
+  respawn-title:
+    title:    "<bold><green>✔ Respawn!</green></bold>"
+    subtitle: ""
+    fade-in:  5
+    stay:     20
+    fade-out: 5
+  countdown-title:
+    title:    "<bold><red>{time}</red></bold>"
+    subtitle: "<gray>Respawn...</gray>"
+    fade-in:  0
+    stay:     25
+    fade-out: 5
+
+# ───────────────────────────────────────────────────────────────
+#  WAND
+# ───────────────────────────────────────────────────────────────
+wand:
+  item-name: "<gradient:&#FF4444:&#4477FF><bold>Chroma Wand</bold></gradient>"
+  item-lore:
+    - ""
+    - "&#AAAAAA L-klik na blok = <white>Pos1</white>"
+    - "&#AAAAAA P-klik na blok = <white>Pos2</white>"
+    - ""
+    - "&#FFDD00Použij /chroma arena save pro uložení."
+    - ""
+  pos1-action-bar: "&#44DD44Pos1 nastavena: <x>, <y>, <z>"
+  pos2-action-bar: "&#4477FFPos2 nastavena: <x>, <y>, <z>"
+
+# ───────────────────────────────────────────────────────────────
+#  RŮZNÉ
+# ───────────────────────────────────────────────────────────────
+misc:
+  only-players:   "<red>Tento příkaz mohou používat pouze hráči.</red>"
+  console-only:   "<red>Tento příkaz lze použít pouze z konzole.</red>"
+  unknown-command: "<red>Neznámý příkaz. Nápověda: /chroma help</red>"

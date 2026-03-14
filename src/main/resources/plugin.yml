@@ -2,5 +2,32 @@ name: ChromaWars
 version: 1.0.0
 main: cz.xoam24.chromawars.ChromaWars
 api-version: '1.21'
-author: xoam24
-softdepend: [PlaceholderAPI]
+description: Splatoon-style Turf Wars minigame
+authors: [xoam24]
+
+softdepend:
+  - PlaceholderAPI
+
+commands:
+  elo:
+    description: Manage player ELO
+    usage: /elo <add|set|remove|reset> <player> <value>
+    permission: chromawars.admin
+  chroma:
+    description: ChromaWars admin commands
+    usage: /chroma <setlobby|wand|arena|...>
+    permission: chromawars.admin
+  join:
+    description: Open team selection GUI
+    usage: /join
+  votemap:
+    description: Open map voting GUI
+    usage: /votemap
+
+permissions:
+  chromawars.admin:
+    description: Access to all ChromaWars admin commands
+    default: op
+  chromawars.play:
+    description: Permission to play ChromaWars
+    default: true

@@ -1,0 +1,212 @@
+# ═══════════════════════════════════════════════════════════════
+#  ChromaWars – Hlavní konfigurace
+#  Podporované formáty barev: &#RRGGBB  nebo  <#RRGGBB>
+#  MiniMessage tagy: <red>, <bold>, <gradient:#FF0000:#0000FF>
+# ═══════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────
+#  HERNÍ NASTAVENÍ
+# ───────────────────────────────────────────────────────────────
+game:
+  default-elo: 1000
+  lobby-countdown: 30
+  game-duration: 180
+  min-players: 2
+  win-percentage: 90.0
+  elo-win: 25
+  elo-loss: 15
+
+# ───────────────────────────────────────────────────────────────
+#  TÝMY
+# ───────────────────────────────────────────────────────────────
+teams:
+  red:
+    name: "&#FF4444Červený"
+    color: "&#FF4444"
+    block: RED_CONCRETE
+    max-players: 4
+    armor-color: "FF4444"      # RGB hex pro leather armor (bez #)
+  blue:
+    name: "&#4477FFModrý"
+    color: "&#4477FF"
+    block: BLUE_CONCRETE
+    max-players: 4
+    armor-color: "4477FF"
+  green:
+    name: "&#44DD44Zelený"
+    color: "&#44DD44"
+    block: GREEN_CONCRETE
+    max-players: 4
+    armor-color: "44DD44"
+  yellow:
+    name: "&#FFDD00Žlutý"
+    color: "&#FFDD00"
+    block: YELLOW_CONCRETE
+    max-players: 4
+    armor-color: "FFDD00"
+
+# ───────────────────────────────────────────────────────────────
+#  LOBBY
+# ───────────────────────────────────────────────────────────────
+lobby:
+  world: world
+  x: 0.5
+  y: 64.0
+  z: 0.5
+  yaw: 0.0
+  pitch: 0.0
+
+# ───────────────────────────────────────────────────────────────
+#  ARÉNY  (plní se přes /chroma arena create)
+# ───────────────────────────────────────────────────────────────
+arenas: {}
+
+# ───────────────────────────────────────────────────────────────
+#  SCOREBOARD – LOBBY
+#  Proměnné dostupné v řádcích:
+#    {player}          – jméno hráče
+#    {elo}             – ELO hráče (async cache)
+#    {position}        – pořadí hráče v žebříčku
+#    {top1_name}       – jméno 1. hráče v žebříčku
+#    {top1_elo}        – ELO  1. hráče
+#    {top2_name}       – jméno 2. hráče
+#    {top2_elo}        – ELO  2. hráče
+#    {top3_name}       – jméno 3. hráče
+#    {top3_elo}        – ELO  3. hráče
+#    {players_online}  – počet hráčů v lobby
+#    {countdown}       – odpočet do startu (sekundy)
+#    {map_vote}        – aktuálně vedoucí mapa hlasování
+# ───────────────────────────────────────────────────────────────
+scoreboard:
+  lobby:
+    enabled: true
+    title: "<bold><gradient:&#FF4444:&#4477FF>ChromaWars</gradient></bold>"
+    update-interval: 20        # v tickách (20 = 1s)
+    lines:
+      - ""
+      - "&#AAAAAA Hráčů v lobby: &#FFFFFF{players_online}"
+      - "&#AAAAAA Odpočet:       &#FFDD00{countdown}s"
+      - ""
+      - "&#FFDD00⭐ &#FFFFFF{top1_name} &#AAAAAA{top1_elo}"
+      - "&#AAAAAA② &#FFFFFF{top2_name} &#AAAAAA{top2_elo}"
+      - "&#AAAAAA③ &#FFFFFF{top3_name} &#AAAAAA{top3_elo}"
+      - ""
+      - "&#AAAAAA Tvoje ELO: &#FF4444{elo}"
+      - "&#AAAAAA Pořadí:    &#FFFFFF#{position}"
+      - ""
+      - "&#888888play.server.cz"
+
+  # SCOREBOARD – IN-GAME
+  #  Proměnné:
+  #    {time_left}        – zbývající čas (mm:ss)
+  #    {player}           – jméno hráče
+  #    {team}             – název týmu hráče
+  #    {arena}            – název arény
+  #    {red_pct}          – % pokrytí červeného týmu
+  #    {blue_pct}         – % pokrytí modrého týmu
+  #    {green_pct}        – % pokrytí zeleného týmu
+  #    {yellow_pct}       – % pokrytí žlutého týmu
+  #    (zobrazují se jen aktivní týmy dané hry)
+  ingame:
+    enabled: true
+    title: "<bold><gradient:&#FF4444:&#4477FF>ChromaWars</gradient></bold>"
+    update-interval: 10        # v tickách (10 = 0.5s)
+    lines:
+      - ""
+      - "&#AAAAAA Aréna: &#FFFFFF{arena}"
+      - "&#AAAAAA Čas:   &#FFDD00{time_left}"
+      - ""
+      - "&#FF4444● &#FFFFFF{red_pct}%"
+      - "&#4477FF● &#FFFFFF{blue_pct}%"
+      - "&#44DD44● &#FFFFFF{green_pct}%"
+      - "&#FFDD00● &#FFFFFF{yellow_pct}%"
+      - ""
+      - "&#AAAAAA Tvůj tým: {team}"
+      - ""
+      - "&#888888play.server.cz"
+
+# ───────────────────────────────────────────────────────────────
+#  GUI – JOIN (výběr týmu)
+#  slot: 0-53 (číslo slotu v inventáři)
+#  material: název Bukkit materiálu
+#  Proměnné v name/lore:
+#    {team_name}    – barevný název týmu
+#    {current}      – aktuální počet hráčů v týmu
+#    {max}          – maximální počet hráčů v týmu
+#    {color}        – hex barva týmu
+# ───────────────────────────────────────────────────────────────
+gui:
+  join:
+    title: "&#FFFFFF⚔ Vyber si tým"
+    rows: 3                    # 1-6 (výška inventáře)
+    fill-empty:
+      enabled: true
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+    # Pozice týmových tlačítek (slot 0-26 pro 3 řady)
+    team-slots:
+      red:    11
+      blue:   13
+      green:  15
+      yellow: 17       # 4. tým, přidej do rows: 3 → slot 17 je ve 2. řadě
+    team-item:
+      material: "{team_block}"   # použije block materiál týmu z teams sekce
+      name: "{team_name}"
+      lore:
+        - ""
+        - "&#AAAAAA Hráčů: &#FFFFFF{current}&#AAAAAA/&#FFFFFF{max}"
+        - ""
+        - "&#FFDD00▶ Klikni pro připojení"
+        - ""
+    # Tlačítko pro opuštění týmu / náhodný tým
+    extra-buttons:
+      random:
+        enabled: true
+        slot: 22
+        material: COMPASS
+        name: "&#FFFFFF🎲 Náhodný tým"
+        lore:
+          - "&#AAAAAA Přiřadí tě do"
+          - "&#AAAAAA nejméně obsazeného týmu."
+
+  # GUI – VOTEMAP (hlasování o mapě)
+  #  Proměnné v name/lore:
+  #    {map_name}    – název arény
+  #    {votes}       – počet hlasů pro tuto mapu
+  #    {total_votes} – celkový počet hlasů
+  #    {voted}       – "✔" pokud hráč hlasoval pro tuto mapu, jinak ""
+  votemap:
+    title: "&#FFFFFF🗺 Hlasování o mapě"
+    rows: 3
+    fill-empty:
+      enabled: true
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+    map-item:
+      material: MAP
+      name: "&#FFFFFF{map_name} {voted}"
+      lore:
+        - ""
+        - "&#AAAAAA Hlasů: &#FFDD00{votes} &#AAAAAA/ {total_votes}"
+        - ""
+        - "&#FFDD00▶ Klikni pro hlasování"
+        - ""
+    # Jak rozmístit mapy (auto = zleva doprava od slotu start-slot)
+    layout:
+      mode: auto              # auto | manual
+      start-slot: 10
+      spacing: 2              # mezera mezi jednotlivými mapami (počet slotů)
+    # Informační panel (vpravo)
+    info-panel:
+      enabled: true
+      slot: 26
+      material: PAPER
+      name: "&#FFDD00📊 Výsledky hlasování"
+      lore:
+        - "&#AAAAAA Celkem hlasů: &#FFFFFF{total_votes}"
+        - ""
+        - "&#AAAAAA Vedoucí mapa:"
+        - "&#FFFFFF{top_map}"
+        - ""
+        - "&#AAAAAA Hra začíná za:"
+        - "&#FFDD00{countdown}s"
