@@ -1,65 +1,131 @@
-# ═══════════════════════════════════════════════════════════════
-#  ChromaWars – Zprávy
-#  Podporované formáty: MiniMessage + &#RRGGBB legacy HEX
-# ═══════════════════════════════════════════════════════════════
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║                   ChromaWars  –  messages.yml                          ║
+# ║  Všechny zprávy podporují MiniMessage formát.                          ║
+# ║  Podporované formáty barev:                                            ║
+# ║    <red>  <bold>  <#FF4444>  <gradient:#FF0000:#0000FF>                ║
+# ║    &#FF4444  (legacy HEX – automaticky konvertováno na MiniMessage)    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+#  Klíče jsou načítány metodou MessageManager.get(key, placeholders...)
+#  Placeholdery se zapisují jako: <nazev>  (MiniMessage Placeholder.parsed)
+#
+#  Tečkový zápis odpovídá YAML hierarchii:
+#    "admin.no-permission"  →  sekce admin, klíč no-permission
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  PREFIX
+#  Číst v: MessageManager.send()  – přidáván automaticky před každou zprávu
+# ─────────────────────────────────────────────────────────────────────────────
 prefix: "<gray>[<gradient:&#FF4444:&#4477FF>ChromaWars</gradient>]</gray> "
 
-# ───────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 #  ADMIN / PŘÍKAZY
-# ───────────────────────────────────────────────────────────────
+#  Číst v: CommandManager  (handleElo, handleChroma, handleArenaSubCommand)
+#
+#  Placeholdery:
+#    <player>  – jméno hráče
+#    <amount>  – hodnota přidaná/odebraná
+#    <value>   – výsledné ELO
+#    <arena>   – název arény
+#    <blocks>  – počet bloků arény
+#    <x> <y> <z> – souřadnice
+#    <min>     – minimální počet hráčů
+# ─────────────────────────────────────────────────────────────────────────────
 admin:
-  no-permission:      "<red>Nemáš oprávnění pro tento příkaz.</red>"
-  player-not-found:   "<red>Hráč '<player>' nebyl nalezen.</red>"
-  elo-add:            "<green>Hráči <player> bylo přidáno <amount> ELO (nové: <value>).</green>"
-  elo-set:            "<green>ELO hráče <player> nastaveno na <value>.</green>"
-  elo-remove:         "<green>Hráči <player> bylo odebráno <amount> ELO (nové: <value>).</green>"
-  elo-reset:          "<green>ELO hráče <player> bylo resetováno na výchozí (<value>).</green>"
-  lobby-set:          "<green>✔ Lobby pozice uložena.</green>"
-  wand-given:         "<yellow>✦ Dostal jsi <white>Chroma Wand</white>. L-klik = Pos1, P-klik = Pos2.</yellow>"
-  arena-created:      "<green>✔ Aréna '<white><arena></white>' vytvořena.</green>"
-  arena-deleted:      "<red>✖ Aréna '<arena>' smazána.</red>"
-  arena-saved:        "<green>✔ Hranice arény '<arena>' uloženy (<blocks> bloků).</green>"
-  arena-not-found:    "<red>Aréna '<arena>' neexistuje.</red>"
-  arena-exists:       "<red>Aréna '<arena>' již existuje.</red>"
-  pos1-set:           "<aqua>Pos1 → <x>, <y>, <z></aqua>"
-  pos2-set:           "<aqua>Pos2 → <x>, <y>, <z></aqua>"
-  not-in-edit-session: "<red>Nejsi v edit session. Použij /chroma arena edit <name>.</red>"
-  edit-session-start: "<yellow>Edit session pro '<arena>' zahájena. Nastav Pos1/Pos2 a ulož přes /chroma arena save.</yellow>"
-  invalid-value:      "<red>Neplatná hodnota. Zadej celé číslo větší než 0.</red>"
-  usage-elo:          "<red>Použití: /elo <add|set|remove|reset> <hráč> [hodnota]</red>"
-  usage-chroma:       "<red>Použití: /chroma <setlobby|wand|arena> ...</red>"
-  reload-done:        "<green>✔ Konfigurace znovu načtena.</green>"
+  no-permission:       "<red>Nemáš oprávnění pro tento příkaz.</red>"
+  player-not-found:    "<red>Hráč '<player>' nebyl nalezen.</red>"
+  invalid-value:       "<red>Neplatná hodnota – zadej celé číslo větší než 0.</red>"
+  usage-elo:           "<red>Použití: /elo <add|set|remove|reset> <hráč> [hodnota]</red>"
+  usage-chroma:        "<red>Použití: /chroma <setlobby|wand|arena|reload></red>"
+  unknown-command:     "<red>Neznámý příkaz. Nápověda: /chroma help</red>"
 
-# ───────────────────────────────────────────────────────────────
+  elo-add:    "<green>Hráči <player> bylo přidáno <amount> ELO.</green>"
+  elo-set:    "<green>ELO hráče <player> bylo nastaveno na <value>.</green>"
+  elo-remove: "<green>Hráči <player> bylo odebráno <amount> ELO.</green>"
+  elo-reset:  "<green>ELO hráče <player> bylo resetováno na <value>.</green>"
+
+  lobby-set:            "<green>✔ Lobby pozice byla uložena.</green>"
+  wand-given:           "<yellow>✦ Dostal jsi <white>Chroma Wand</white>. L-klik = Pos1, P-klik = Pos2.</yellow>"
+
+  arena-created:        "<green>✔ Aréna '<white><arena></white>' byla vytvořena.</green>"
+  arena-deleted:        "<red>✖ Aréna '<arena>' byla smazána.</red>"
+  arena-saved:          "<green>✔ Hranice arény '<arena>' uloženy (<blocks> bloků).</green>"
+  arena-exists:         "<red>Aréna '<arena>' již existuje.</red>"
+  arena-not-found:      "<red>Aréna '<arena>' neexistuje.</red>"
+  edit-session-start:   "<yellow>Edit session pro '<arena>' zahájena. Nastav Pos1/Pos2 Wandem a ulož přes /chroma arena save.</yellow>"
+  not-in-edit-session:  "<red>Nejsi v edit session. Spusť ji přes /chroma arena edit <název>.</red>"
+
+  pos1-set: "&#44DD44Pos1 → <x>, <y>, <z>"
+  pos2-set: "&#4477FFPos2 → <x>, <y>, <z>"
+
+  reload-done: "<green>✔ Konfigurace byla znovu načtena.</green>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  RŮZNÉ
+#  Číst v: CommandManager (misc kontroly)
+# ─────────────────────────────────────────────────────────────────────────────
+misc:
+  only-players: "<red>Tento příkaz mohou používat pouze hráči.</red>"
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  LOBBY
-# ───────────────────────────────────────────────────────────────
+#  Číst v: SessionManager.setPlayerTeam()  +  GameManager.broadcastToLobby()
+#
+#  Placeholdery:
+#    <team>        – název týmu (displayName z TeamConfig)
+#    <team_color>  – MiniMessage tag barvy týmu  <#RRGGBB>
+#    <max>         – maximální počet hráčů v týmu
+#    <current>     – aktuální počet hráčů v lobby
+#    <min>         – minimální počet hráčů pro start
+#    <time>        – odpočet v sekundách
+# ─────────────────────────────────────────────────────────────────────────────
 lobby:
-  join:           "<green>Připojil ses do lobby!</green>"
-  countdown:      "<yellow>Hra začíná za <time> sekund!</yellow>"
-  countdown-soon: "<bold><red>Hra začíná za <time>!</red></bold>"
-  waiting:        "<yellow>Čekáme na hráče... (<current>/<min>)</yellow>"
-  team-join:      "{team_color}Přidal ses k týmu {team}."
-  team-full:      "<red>Tým {team} je plný ({max} hráčů).</red>"
-  team-already:   "<yellow>Již jsi v týmu {team}.</yellow>"
-  random-team:    "{team_color}Byl jsi přiřazen do týmu {team}."
-  not-in-lobby:   "<red>Tento příkaz lze použít pouze v lobby.</red>"
+  join:          "<green>Připojil ses do lobby!</green>"
+  team-join:     "<team_color>Přidal ses k týmu <team>."
+  team-full:     "<red>Tým <team> je plný (<max> hráčů).</red>"
+  team-already:  "<yellow>Již jsi v týmu <team>.</yellow>"
+  random-team:   "<team_color>Byl jsi náhodně přiřazen do týmu <team>."
+  waiting:       "<yellow>Čekáme na hráče... (<current>/<min>)</yellow>"
+  countdown:     "<yellow>Hra začíná za <time> sekund!</yellow>"
+  not-in-lobby:  "<red>Tento příkaz lze použít pouze v lobby.</red>"
   already-in-game: "<red>Již jsi ve hře.</red>"
 
-# ───────────────────────────────────────────────────────────────
+  # Title odpočtu v lobby  –  čten v GameManager.showCountdownTitle()
+  # Proměnné: <time>
+  countdown-title:
+    title:    "<bold><yellow><time></yellow></bold>"
+    subtitle: ""
+    fade-in:  0
+    stay:     25
+    fade-out: 5
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  HLASOVÁNÍ O MAPĚ
-# ───────────────────────────────────────────────────────────────
+#  Číst v: MenuManager  +  CommandManager.handleVotemap()
+#
+#  Placeholdery:
+#    <map>         – název arény
+#    <votes>       – počet hlasů
+# ─────────────────────────────────────────────────────────────────────────────
 vote:
   registered:    "<green>✔ Tvůj hlas pro '<map>' byl zaregistrován.</green>"
   already-voted: "<yellow>Již jsi hlasoval. Tvůj hlas: '<map>'.</yellow>"
   changed:       "<green>✔ Tvůj hlas byl změněn na '<map>'.</green>"
-  no-arenas:     "<red>Nejsou dostupné žádné arény.</red>"
+  no-arenas:     "<red>Nejsou dostupné žádné arény pro hlasování.</red>"
   result:        "<gold>Vybrána mapa: <white><map></white> (<votes> hlasů).</gold>"
 
-# ───────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 #  HRA – PRŮBĚH
-# ───────────────────────────────────────────────────────────────
+#  Číst v: GameManager  (tituly, broadcast zprávy)
+# ─────────────────────────────────────────────────────────────────────────────
 game:
+  not-enough-players: "<yellow>Nedostatek hráčů pro start (min. <min>).</yellow>"
+  time-warning:       "<yellow>⚠ Zbývá <time> sekund!</yellow>"
+  win-broadcast:      "<bold><team_color><team></bold><gold> obsadili </gold><bold><percent>%</bold><gold> arény a vítězí!</gold>"
+  elo-gain:           "<green>+<amount> ELO <gray>(celkem: <total>)</gray></green>"
+  elo-loss:           "<red>-<amount> ELO <gray>(celkem: <total>)</gray></red>"
+
+  # Title při startu hry  –  čten v GameManager.showStartTitle()
   start-title:
     title:    "<bold><gradient:&#FF4444:&#4477FF>CHROMAWARS!</gradient></bold>"
     subtitle: "<gray>Obarvi co nejvíce plochy!</gray>"
@@ -67,46 +133,39 @@ game:
     stay:     60
     fade-out: 20
 
+  # Title při konci hry
   end-title:
+    # Výhra  –  proměnné: {team_color}  {team}  {percent}
     win:
       title:    "<bold>{team_color}{team} vítězí!</bold>"
-      subtitle: "<gray>Obsazeno: <percent>%</gray>"
+      subtitle: "<gray>Obsazeno: {percent}%</gray>"
+      fade-in:  10
+      stay:     80
+      fade-out: 20
+    # Remíza (čas vypršel bez splnění win condition)
     draw:
       title:    "<bold><gray>Remíza!</gray></bold>"
       subtitle: "<gray>Čas vypršel</gray>"
-    fade-in:  10
-    stay:     80
-    fade-out: 20
+      fade-in:  10
+      stay:     80
+      fade-out: 20
 
-  countdown-title:
-    title:    "<bold><yellow>{time}</yellow></bold>"
-    subtitle: ""
-    fade-in:  0
-    stay:     25
-    fade-out: 5
-
-  elo-gain:     "<green>+<amount> ELO <gray>(celkem: <total>)</gray></green>"
-  elo-loss:     "<red>-<amount> ELO <gray>(celkem: <total>)</gray></red>"
-  win-broadcast: "<bold>{team_color}{team}</bold><gold> obsadili </gold><bold><percent>%</bold><gold> arény a vítězí!</gold>"
-  time-warning: "<yellow>⚠ Zbývá <time> sekund!</yellow>"
-  not-enough-players: "<yellow>Nedostatek hráčů pro start (min. <min>).</yellow>"
-
-# ───────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 #  SMRT / RESPAWN
-# ───────────────────────────────────────────────────────────────
+#  Číst v: CombatListener  (handleDeath, startRespawnCountdown, performRespawn)
+# ─────────────────────────────────────────────────────────────────────────────
 death:
+  # Title okamžitě po smrti (přechod do SPECTATOR)
+  # Proměnné: <time> – délka respawnu (hardcoded DEFAULT_RESPAWN_SECONDS = 5)
   spectator-title:
     title:    "<bold><red>✖ Zemřel jsi!</red></bold>"
-    subtitle: "<gray>Respawn za <time>s...</gray>"
+    subtitle: "<gray>Respawn za 5s...</gray>"
     fade-in:  5
     stay:     40
     fade-out: 5
-  respawn-title:
-    title:    "<bold><green>✔ Respawn!</green></bold>"
-    subtitle: ""
-    fade-in:  5
-    stay:     20
-    fade-out: 5
+
+  # Title tikající každou sekundu odpočtu
+  # Proměnné: {time} – zbývající sekundy
   countdown-title:
     title:    "<bold><red>{time}</red></bold>"
     subtitle: "<gray>Respawn...</gray>"
@@ -114,25 +173,39 @@ death:
     stay:     25
     fade-out: 5
 
-# ───────────────────────────────────────────────────────────────
+  # Title při respawnu
+  respawn-title:
+    title:    "<bold><green>✔ Respawn!</green></bold>"
+    subtitle: ""
+    fade-in:  5
+    stay:     20
+    fade-out: 5
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  WAND
-# ───────────────────────────────────────────────────────────────
+#  Číst v: WandManager.giveWand()  +  WandManager.onInteract()
+#
+#  item-name / item-lore: MiniMessage text pro itemstack
+#
+#  Pozor: item-lore je VÍCEŘÁDKOVÝ string oddělený \n
+#  Alternativně lze použít seznam (list):
+#    item-lore:
+#      - "řádek 1"
+#      - "řádek 2"
+#  Ale WandManager.giveWand() čte klíč jako plain string přes getRaw()
+#  a parsuje každou linku zvlášť – proto používáme víceřádkový string.
+#
+#  pos1-action-bar / pos2-action-bar: zpráva v action baru po kliknutí
+#  Proměnné: <x>  <y>  <z>
+# ─────────────────────────────────────────────────────────────────────────────
 wand:
   item-name: "<gradient:&#FF4444:&#4477FF><bold>Chroma Wand</bold></gradient>"
-  item-lore:
-    - ""
-    - "&#AAAAAA L-klik na blok = <white>Pos1</white>"
-    - "&#AAAAAA P-klik na blok = <white>Pos2</white>"
-    - ""
-    - "&#FFDD00Použij /chroma arena save pro uložení."
-    - ""
+  item-lore: |
+    
+    &#AAAAAAЛ-klik na blok = <white>Pos1</white>
+    &#AAAAAAR-klik na blok = <white>Pos2</white>
+    
+    &#FFDD00Ulož přes /chroma arena save
+
   pos1-action-bar: "&#44DD44Pos1 nastavena: <x>, <y>, <z>"
   pos2-action-bar: "&#4477FFPos2 nastavena: <x>, <y>, <z>"
-
-# ───────────────────────────────────────────────────────────────
-#  RŮZNÉ
-# ───────────────────────────────────────────────────────────────
-misc:
-  only-players:   "<red>Tento příkaz mohou používat pouze hráči.</red>"
-  console-only:   "<red>Tento příkaz lze použít pouze z konzole.</red>"
-  unknown-command: "<red>Neznámý příkaz. Nápověda: /chroma help</red>"
