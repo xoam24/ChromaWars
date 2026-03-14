@@ -11,30 +11,30 @@ public final class ChromaWars extends JavaPlugin {
     private static ChromaWars instance;
 
     // ── Krok 1 ────────────────────────────────────────────────────────────────
-    private ConfigManager   configManager;
-    private MessageManager  messageManager;
-    private DatabaseManager databaseManager;
-    private EloManager      eloManager;
+    private ConfigManager    configManager;
+    private MessageManager   messageManager;
+    private DatabaseManager  databaseManager;
+    private EloManager       eloManager;
 
     // ── Krok 2 ────────────────────────────────────────────────────────────────
-    private WandManager     wandManager;
-    private ArenaManager    arenaManager;
-    private MenuManager     menuManager;
-    private CommandManager  commandManager;
-    private PlaceholderHook placeholderHook;
+    private WandManager      wandManager;
+    private ArenaManager     arenaManager;
+    private MenuManager      menuManager;
+    private CommandManager   commandManager;
+    private PlaceholderHook  placeholderHook;
 
     // ── Krok 3 ────────────────────────────────────────────────────────────────
-    private SessionManager   sessionManager;
+    private SessionManager    sessionManager;
     private ScoreboardManager scoreboardManager;
-    private GameManager      gameManager;
-    private TurfListener     turfListener;
-    private CombatListener   combatListener;
+    private GameManager       gameManager;
+    private TurfListener      turfListener;
+    private CombatListener    combatListener;
 
     @Override
     public void onEnable() {
         instance = this;
 
-        // 1. Config
+        // 1. Config (musí být první)
         this.configManager = new ConfigManager(this);
         configManager.loadAll();
 
@@ -50,27 +50,27 @@ public final class ChromaWars extends JavaPlugin {
             return;
         }
 
-        // 4. ELO + Cache
+        // 4. ELO + Leaderboard cache
         this.eloManager = new EloManager(this);
         eloManager.updateLeaderboardCacheAsync();
 
-        // 5. Wand + Arény + Menu + Příkazy
-        this.wandManager   = new WandManager(this);
-        this.arenaManager  = new ArenaManager(this);
-        this.menuManager   = new MenuManager(this);
+        // 5. Wand, Arény, Menu, Příkazy
+        this.wandManager    = new WandManager(this);
+        this.arenaManager   = new ArenaManager(this);
+        this.menuManager    = new MenuManager(this);
         this.commandManager = new CommandManager(this);
 
-        // 6. Sessions (musí být před GameManagerem!)
+        // 6. SessionManager (musí být před GameManagerem!)
         this.sessionManager = new SessionManager(this);
 
-        // 7. Scoreboard
+        // 7. ScoreboardManager
         this.scoreboardManager = new ScoreboardManager(this);
 
-        // 8. Listeners
+        // 8. Listenery
         this.turfListener   = new TurfListener(this);
         this.combatListener = new CombatListener(this);
 
-        // 9. GameManager (spustí lobby loop + scoreboard task)
+        // 9. GameManager (spustí lobby loop)
         this.gameManager = new GameManager(this);
 
         // 10. PlaceholderAPI (soft-depend)
@@ -80,65 +80,47 @@ public final class ChromaWars extends JavaPlugin {
             getLogger().info("PlaceholderAPI hook zaregistrován.");
         }
 
-        getLogger().info("╔══════════════════════════════════╗");
-        getLogger().info("║   ChromaWars v" + getDescription().getVersion() + " načten!    ║");
-        getLogger().info("║   Arény: " + configManager.getArenaNames().size() + "  Týmy: " + configManager.getTeams().size() + "             ║");
-        getLogger().info("╚══════════════════════════════════╝");
+        getLogger().info("ChromaWars v" + getDescription().getVersion() + " načten!");
+        getLogger().info("Arény: " + configManager.getArenaNames().size()
+                + " | Týmy: " + configManager.getTeams().size());
     }
 
     @Override
     public void onDisable() {
-        // Ukončíme hru pokud běží
         if (gameManager != null && gameManager.isRunning()) {
             gameManager.endGame(null);
         }
-
-        // Zrušíme respawn tasky
         if (combatListener != null) {
             combatListener.cancelAllRespawnTasks();
         }
-
-        // Odebereme scoreboardy
         if (scoreboardManager != null) {
             scoreboardManager.stopAll();
             scoreboardManager.removeAllScoreboards();
         }
-
-        // Zavřeme DB
-        if (databaseManager != null) databaseManager.close();
-
+        if (databaseManager != null) {
+            databaseManager.close();
+        }
         getLogger().info("ChromaWars byl úspěšně vypnut.");
     }
 
-    // ── Gettery ───────────────────────────────────────────────────────────────
+    // ── Gettery – všechny silně typované (žádný Object / generický cast) ──────
 
-    public static ChromaWars getInstance()          { return instance; }
-    public ConfigManager    getConfigManager()      { return configManager; }
-    public MessageManager   getMessageManager()     { return messageManager; }
-    public DatabaseManager  getDatabaseManager()    { return databaseManager; }
-    public EloManager       getEloManager()         { return eloManager; }
-    public WandManager      getWandManager()        { return wandManager; }
-    public ArenaManager getArenaManager()       { return arenaManager; }
-    public MenuManager getMenuManager()        { return menuManager; }
-    public PlaceholderHook  getPlaceholderHook()    { return placeholderHook; }
-    public SessionManager   getSessionManager()     { return sessionManager; }
-    public ScoreboardManager getScoreboardManager() { return scoreboardManager; }
-    public GameManager      getGameManager()        { return gameManager; }
-    public TurfListener     getTurfListener()       { return turfListener; }
-    public CombatListener   getCombatListener()     { return combatListener; }
+    public static ChromaWars getInstance()           { return instance; }
 
-    // Generické gettery pro zpětnou kompatibilitu s Krokem 2
-    @SuppressWarnings("unchecked")
-    public <T> T get(Class<T> clazz) {
-        if (clazz == SessionManager.class)    return clazz.cast(sessionManager);
-        if (clazz == GameManager.class)       return clazz.cast(gameManager);
-        if (clazz == ScoreboardManager.class) return clazz.cast(scoreboardManager);
-        if (clazz == TurfListener.class)      return clazz.cast(turfListener);
-        if (clazz == CombatListener.class)    return clazz.cast(combatListener);
-        return null;
-    }
+    public ConfigManager     getConfigManager()      { return configManager; }
+    public MessageManager    getMessageManager()     { return messageManager; }
+    public DatabaseManager   getDatabaseManager()    { return databaseManager; }
+    public EloManager        getEloManager()         { return eloManager; }
 
-    // Settery (ponecháme pro kompatibilitu s Krokem 2 kódem)
-    public void setSessionManager(Object sm) { /* obsazeno přes přímý getter */ }
-    public void setGameManager(Object gm)    { /* obsazeno přes přímý getter */ }
+    public WandManager       getWandManager()        { return wandManager; }
+    public ArenaManager      getArenaManager()       { return arenaManager; }
+    public MenuManager       getMenuManager()        { return menuManager; }
+    public CommandManager    getCommandManager()     { return commandManager; }
+    public PlaceholderHook   getPlaceholderHook()    { return placeholderHook; }
+
+    public SessionManager    getSessionManager()     { return sessionManager; }
+    public ScoreboardManager getScoreboardManager()  { return scoreboardManager; }
+    public GameManager       getGameManager()        { return gameManager; }
+    public TurfListener      getTurfListener()       { return turfListener; }
+    public CombatListener    getCombatListener()     { return combatListener; }
 }

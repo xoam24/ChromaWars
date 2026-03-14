@@ -13,56 +13,57 @@ import org.bukkit.scoreboard.*;
 import java.util.*;
 
 /**
- * Nativní Paper scoreboard pro lobby a in-game.
+ * Nativní Paper 1.21 Scoreboard.
  *
- * Každý hráč má vlastní Scoreboard instanci (zabrání konfliktům).
- * Řádky se čtou z config.yml (scoreboard.lobby.lines / scoreboard.ingame.lines).
- * Proměnné se nahrazují v metodě replacePlaceholders().
+ * Implementace používá Team-prefix trik:
+ *  - Každý řádek = anonymní entry (prázdný hráčský jméno s §-padding)
+ *  - Team pro každý řádek nese prefix = barevný text (MiniMessage → Component)
+ *  - Score hodnota určuje pořadí řádku
  *
- * Lobby proměnné:
- *   {player} {elo} {position} {top1_name} {top1_elo} {top2_name} {top2_elo}
- *   {top3_name} {top3_elo} {players_online} {countdown} {map_vote}
- *
- * In-game proměnné:
- *   {player} {team} {arena} {time_left}
- *   {red_pct} {blue_pct} {green_pct} {yellow_pct}
+ * Tento přístup je kompatibilní s Paper 1.21 a nevyžaduje setCustomName().
  */
 public class ScoreboardManager {
 
     private final ChromaWars plugin;
     private final MiniMessage mm = MiniMessage.miniMessage();
 
-    // Tasky pro pravidelnou aktualizaci
     private BukkitTask lobbyTask   = null;
     private BukkitTask ingameTask  = null;
 
-    // UUID → Scoreboard (vlastní instance pro každého hráče)
+    // UUID → vlastní Scoreboard instance
     private final Map<UUID, Scoreboard> playerBoards = new HashMap<>();
+
+    // Unikátní entry stringy pro každý řádek (§0, §1, ... §f, §0§0, ...)
+    private static final String[] ENTRIES;
+    static {
+        String[] codes = {"0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"};
+        ENTRIES = new String[32];
+        for (int i = 0; i < 16; i++)  ENTRIES[i]      = "§" + codes[i];
+        for (int i = 0; i < 16; i++)  ENTRIES[i + 16] = "§" + codes[i] + "§r";
+    }
 
     public ScoreboardManager(ChromaWars plugin) {
         this.plugin = plugin;
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  START / STOP TASKŮ
+    //  TASKY
     // ══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Spustí lobby scoreboard ticker.
-     * Volat při startu pluginu (v ChromaWars.onEnable nebo při resetu hry).
-     */
     public void startLobbyTask() {
         stopLobbyTask();
-        int interval = plugin.getConfigManager().getRawConfig()
-                .getInt("scoreboard.lobby.update-interval", 20);
         if (!plugin.getConfigManager().getRawConfig()
                 .getBoolean("scoreboard.lobby.enabled", true)) return;
+
+        int interval = plugin.getConfigManager().getRawConfig()
+                .getInt("scoreboard.lobby.update-interval", 20);
 
         lobbyTask = new BukkitRunnable() {
             @Override public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    PlayerSession session = plugin.getSessionManager() != null
-                            ? plugin.<SessionManager>getSessionManager().getSession(p) : null;
+                    SessionManager sm = plugin.getSessionManager();
+                    if (sm == null) { updateLobbyScoreboard(p); continue; }
+                    PlayerSession session = sm.getSession(p);
                     if (session == null || session.isInLobby()) {
                         updateLobbyScoreboard(p);
                     }
@@ -78,22 +79,20 @@ public class ScoreboardManager {
         }
     }
 
-    /**
-     * Spustí in-game scoreboard ticker.
-     * Volat v GameManager.startGame().
-     */
     public void startIngameTask() {
         stopIngameTask();
-        int interval = plugin.getConfigManager().getRawConfig()
-                .getInt("scoreboard.ingame.update-interval", 10);
         if (!plugin.getConfigManager().getRawConfig()
                 .getBoolean("scoreboard.ingame.enabled", true)) return;
+
+        int interval = plugin.getConfigManager().getRawConfig()
+                .getInt("scoreboard.ingame.update-interval", 10);
 
         ingameTask = new BukkitRunnable() {
             @Override public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    PlayerSession session = plugin.<SessionManager>getSessionManager() != null
-                            ? plugin.<SessionManager>getSessionManager().getSession(p) : null;
+                    SessionManager sm = plugin.getSessionManager();
+                    if (sm == null) continue;
+                    PlayerSession session = sm.getSession(p);
                     if (session != null && (session.isPlaying() || session.isSpectator())) {
                         updateIngameScoreboard(p);
                     }
@@ -109,6 +108,11 @@ public class ScoreboardManager {
         }
     }
 
+    public void stopAll() {
+        stopLobbyTask();
+        stopIngameTask();
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  LOBBY SCOREBOARD
     // ══════════════════════════════════════════════════════════════════════════
@@ -119,16 +123,15 @@ public class ScoreboardManager {
         String titleRaw = plugin.getConfigManager().getRawConfig()
                 .getString("scoreboard.lobby.title",
                         "<bold><gradient:&#FF4444:&#4477FF>ChromaWars</gradient></bold>");
-
-        Map<String, String> vars = buildLobbyVars(player);
-        renderScoreboard(player, titleRaw, lines, vars);
+        renderScoreboard(player, titleRaw, lines, buildLobbyVars(player));
     }
 
     private Map<String, String> buildLobbyVars(Player player) {
         Map<String, String> v = new HashMap<>();
-        EloManager   elo      = plugin.getEloManager();
-        ArenaManager arenas   = plugin.getArenaManager();
-        SessionManager sm     = plugin.<SessionManager>getSessionManager();
+        EloManager     elo = plugin.getEloManager();
+        ArenaManager   am  = plugin.getArenaManager();
+        SessionManager sm  = plugin.getSessionManager();
+        GameManager    gm  = plugin.getGameManager();
 
         v.put("{player}",         player.getName());
         v.put("{top1_name}",      elo.getNameAtPosition(1));
@@ -138,26 +141,20 @@ public class ScoreboardManager {
         v.put("{top3_name}",      elo.getNameAtPosition(3));
         v.put("{top3_elo}",       String.valueOf(elo.getEloAtPosition(3)));
         v.put("{players_online}", String.valueOf(Bukkit.getOnlinePlayers().size()));
-        v.put("{map_vote}",       arenas != null ? arenas.getLeadingArenaName() : "–");
-
-        // ELO a pozice hráče z cache session
-        if (sm != null) {
-            PlayerSession session = sm.getSession(player);
-            if (session != null) {
-                v.put("{elo}",      String.valueOf(session.getCachedElo()));
-            } else {
-                v.put("{elo}",      String.valueOf(plugin.getConfigManager().getDefaultElo()));
-            }
-        } else {
-            v.put("{elo}", String.valueOf(plugin.getConfigManager().getDefaultElo()));
-        }
+        v.put("{map_vote}",       am != null ? am.getLeadingArenaName() : "–");
+        v.put("{countdown}",      gm != null ? String.valueOf(gm.getLobbyCountdown()) : "–");
 
         int pos = elo.getPositionOfPlayer(player.getName());
         v.put("{position}", pos > 0 ? String.valueOf(pos) : "–");
 
-        // Countdown
-        GameManager gm = plugin.<GameManager>getGameManager();
-        v.put("{countdown}", gm != null ? String.valueOf(gm.getLobbyCountdown()) : "–");
+        if (sm != null) {
+            PlayerSession session = sm.getSession(player);
+            v.put("{elo}", session != null
+                    ? String.valueOf(session.getCachedElo())
+                    : String.valueOf(plugin.getConfigManager().getDefaultElo()));
+        } else {
+            v.put("{elo}", String.valueOf(plugin.getConfigManager().getDefaultElo()));
+        }
 
         return v;
     }
@@ -172,29 +169,27 @@ public class ScoreboardManager {
         String titleRaw = plugin.getConfigManager().getRawConfig()
                 .getString("scoreboard.ingame.title",
                         "<bold><gradient:&#FF4444:&#4477FF>ChromaWars</gradient></bold>");
-
-        Map<String, String> vars = buildIngameVars(player);
-        renderScoreboard(player, titleRaw, lines, vars);
+        renderScoreboard(player, titleRaw, lines, buildIngameVars(player));
     }
 
     private Map<String, String> buildIngameVars(Player player) {
         Map<String, String> v = new HashMap<>();
-        GameManager   gm  = plugin.<GameManager>getGameManager();
-        SessionManager sm = plugin.<SessionManager>getSessionManager();
+        GameManager    gm = plugin.getGameManager();
+        SessionManager sm = plugin.getSessionManager();
 
         v.put("{player}",     player.getName());
         v.put("{arena}",      gm != null ? gm.getCurrentArenaName() : "–");
-        v.put("{time_left}",  gm != null ? gm.getFormattedTimeLeft() : "–");
-        v.put("{red_pct}",    gm != null ? gm.getTeamPercentFormatted("red")    : "0");
-        v.put("{blue_pct}",   gm != null ? gm.getTeamPercentFormatted("blue")   : "0");
-        v.put("{green_pct}",  gm != null ? gm.getTeamPercentFormatted("green")  : "0");
-        v.put("{yellow_pct}", gm != null ? gm.getTeamPercentFormatted("yellow") : "0");
+        v.put("{time_left}",  gm != null ? gm.getFormattedTimeLeft() : "–:--");
+        v.put("{red_pct}",    gm != null ? gm.getTeamPercentFormatted("red")    : "0.0");
+        v.put("{blue_pct}",   gm != null ? gm.getTeamPercentFormatted("blue")   : "0.0");
+        v.put("{green_pct}",  gm != null ? gm.getTeamPercentFormatted("green")  : "0.0");
+        v.put("{yellow_pct}", gm != null ? gm.getTeamPercentFormatted("yellow") : "0.0");
 
         if (sm != null) {
             PlayerSession session = sm.getSession(player);
             if (session != null && session.getTeamId() != null) {
-                var team = plugin.getConfigManager().getTeam(session.getTeamId());
-                v.put("{team}", team != null ? team.displayName() : session.getTeamId());
+                var teamCfg = plugin.getConfigManager().getTeam(session.getTeamId());
+                v.put("{team}", teamCfg != null ? teamCfg.displayName() : session.getTeamId());
             } else {
                 v.put("{team}", "–");
             }
@@ -206,74 +201,73 @@ public class ScoreboardManager {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  JÁDRO – RENDER
+    //  RENDER – Team-prefix trik (Paper 1.21 kompatibilní)
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Vytvoří nebo aktualizuje scoreboard hráče.
-     * Každý hráč má vlastní Scoreboard instanci, takže změny se navzájem neovlivňují.
+     * Renderuje scoreboard pomocí Team-prefix triku.
+     *
+     * Pro každý řádek:
+     *  - entry string = unikátní §-kódovaný placeholder (neviditelný)
+     *  - Team pro tento řádek má prefix = barevný Component text
+     *  - Score tohoto entry = pozice řádku (klesající)
+     *
+     * Tím obejdeme setCustomName() které v Paper 1.21 neexistuje.
      */
     private void renderScoreboard(Player player, String titleRaw,
                                   List<String> lines, Map<String, String> vars) {
-        // Nahradíme proměnné v titulu
+        // Titulek
         String resolvedTitle = replacePlaceholders(titleRaw, vars);
-        Component titleComponent = mm.deserialize(resolvedTitle);
+        Component titleComp  = mm.deserialize(resolvedTitle);
 
-        // Získáme nebo vytvoříme Scoreboard pro tohoto hráče
-        Scoreboard board = playerBoards.computeIfAbsent(player.getUniqueId(), uuid -> {
-            Scoreboard b = Bukkit.getScoreboardManager().getNewScoreboard();
-            return b;
-        });
+        // Vlastní Scoreboard pro hráče
+        Scoreboard board = playerBoards.computeIfAbsent(
+                player.getUniqueId(),
+                uid -> Bukkit.getScoreboardManager().getNewScoreboard());
 
-        // Najdeme nebo vytvoříme Objective
-        Objective obj = board.getObjective("chromawars");
+        // Objective – vytvoříme nebo aktualizujeme titulek
+        Objective obj = board.getObjective("cw_sidebar");
         if (obj == null) {
-            obj = board.registerNewObjective("chromawars", Criteria.DUMMY, titleComponent);
+            obj = board.registerNewObjective("cw_sidebar", Criteria.DUMMY, titleComp);
             obj.setDisplaySlot(DisplaySlot.SIDEBAR);
         } else {
-            obj.displayName(titleComponent);
+            obj.displayName(titleComp);
         }
 
-        // Odstraníme staré záznamy
-        for (String entry : board.getEntries()) {
-            board.resetScores(entry);
-        }
-
-        // Zapíšeme řádky (skóre klesá od počtu řádků do 1)
-        // Omezíme na max 15 řádků (Minecraft limit pro sidebar)
+        // Max 15 řádků (Minecraft sidebar limit), přeskočíme přebytečné
         int maxLines = Math.min(lines.size(), 15);
-        int score    = maxLines;
 
+        // Odebereme stará entry a teamy
+        for (int i = 0; i < ENTRIES.length; i++) {
+            board.resetScores(ENTRIES[i]);
+            Team old = board.getTeam("cw_line_" + i);
+            if (old != null) old.unregister();
+        }
+
+        // Zapíšeme nové řádky
+        final Objective finalObj = obj;
         for (int i = 0; i < maxLines; i++) {
             String rawLine  = lines.get(i);
             String resolved = replacePlaceholders(rawLine, vars);
-            Component line  = mm.deserialize(resolved);
+            Component lineComp = mm.deserialize(resolved);
 
-            // Unikátní entry pro každý řádek (§0 - §f + §r padding)
-            // Paper 1.21 supportuje přímý Component v Score
-            Score s = obj.getScore(Bukkit.getOfflinePlayer(
-                    generateUniqueEntry(i)));
-            s.setCustomName(line);   // Paper API – nastaví Component přímo
-            s.setScore(score--);
+            // Entry pro tento řádek
+            String entry = ENTRIES[i % ENTRIES.length];
+
+            // Team nese prefix = barevný text
+            String teamName = "cw_line_" + i;
+            Team team = board.registerNewTeam(teamName);
+            team.prefix(lineComp);
+            team.addEntry(entry);
+
+            // Skóre = maxLines - i (vyšší = výše na scoreboard)
+            Score score = finalObj.getScore(entry);
+            score.setScore(maxLines - i);
         }
 
         player.setScoreboard(board);
     }
 
-    /**
-     * Generuje unikátní neviditelný řetězec pro každý řádek scoreboard.
-     * Bukkit vyžaduje unikátní entry strings.
-     */
-    private String generateUniqueEntry(int index) {
-        // §0§0§0... (kombinace color kódů jako padding)
-        String[] colors = {"§0","§1","§2","§3","§4","§5","§6","§7",
-                "§8","§9","§a","§b","§c","§d","§e","§f"};
-        return colors[index % colors.length] + "§r".repeat(index / colors.length);
-    }
-
-    /**
-     * Nahradí všechny proměnné {key} hodnotami z mapy.
-     */
     private String replacePlaceholders(String text, Map<String, String> vars) {
         for (Map.Entry<String, String> e : vars.entrySet()) {
             text = text.replace(e.getKey(), e.getValue());
@@ -281,24 +275,19 @@ public class ScoreboardManager {
         return text;
     }
 
-    // ── Odebrání scoreboard hráči ─────────────────────────────────────────────
+    // ── Odebrání scoreboard ───────────────────────────────────────────────────
 
-    /**
-     * Vrátí hráči výchozí (prázdný) scoreboard.
-     * Volat při odpojení nebo při přechodu mimo plugin.
-     */
     public void removeScoreboard(Player player) {
         player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
-        playerBoards.remove(player.getUniqueId());
+        Scoreboard old = playerBoards.remove(player.getUniqueId());
+        if (old != null) {
+            // Uklid teams aby nezůstávaly v paměti
+            for (Team t : old.getTeams()) t.unregister();
+        }
     }
 
     public void removeAllScoreboards() {
         for (Player p : Bukkit.getOnlinePlayers()) removeScoreboard(p);
         playerBoards.clear();
-    }
-
-    public void stopAll() {
-        stopLobbyTask();
-        stopIngameTask();
     }
 }

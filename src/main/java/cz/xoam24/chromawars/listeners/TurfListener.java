@@ -1,6 +1,9 @@
 package cz.xoam24.chromawars.listeners;
 
 import cz.xoam24.chromawars.ChromaWars;
+import cz.xoam24.chromawars.managers.GameManager;
+import cz.xoam24.chromawars.managers.SessionManager;
+import cz.xoam24.chromawars.model.ArenaData;
 import cz.xoam24.chromawars.model.PlayerSession;
 import cz.xoam24.chromawars.model.TeamConfig;
 import org.bukkit.Material;
@@ -16,21 +19,19 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Obarvování bloků při pohybu hráče – jádro Turf Wars mechaniky.
+ * Optimalizované barvení bloků při pohybu hráče.
  *
  * Optimalizace:
- *  1. Kontrolujeme POUZE změnu bloku (blockX/Y/Z), ne každý pohyb myší.
- *  2. Setblock se volá jen pokud se blok pod hráčem SKUTEČNĚ liší od barvy týmu.
- *  3. Počítadla bloků se aktualizují přímo v GameManageru – žádný scan arény.
- *  4. Cache posledního bloku (UUID → [x,y,z]) zabrání duplicitním voláním
- *     při pohybu v rámci stejného bloku.
+ *  1. Kontrola změny bloku (blockX/Y/Z) – ignorujeme pohyby myší.
+ *  2. setType() jen pokud blok SKUTEČNĚ potřebuje změnu.
+ *  3. Počítadla aktualizujeme přímo v GameManageru (O(1), žádný scan).
+ *  4. lastBlockCache eliminuje duplicitní zpracování na stejném bloku.
  */
 public class TurfListener implements Listener {
 
     private final ChromaWars plugin;
 
-    // Cache posledního bloku hráče: UUID → [blockX, blockY, blockZ]
-    // Zabrání duplicitnímu obarvování na stejném bloku
+    // UUID → packed long (blockX << 40 | blockY << 20 | blockZ) pro cache
     private final Map<UUID, long[]> lastBlockCache = new ConcurrentHashMap<>();
 
     public TurfListener(ChromaWars plugin) {
@@ -40,97 +41,101 @@ public class TurfListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerMove(PlayerMoveEvent event) {
-        // ── 1. Rychlá kontrola – hra musí běžet ──────────────────────────────
-        GameManager gm = plugin.<GameManager>getGameManager();
+        // ── 1. Rychlá kontrola blokové změny ─────────────────────────────────
+        if (event.getFrom().getBlockX() == event.getTo().getBlockX()
+                && event.getFrom().getBlockY() == event.getTo().getBlockY()
+                && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) {
+            return; // pohyb myší bez změny bloku
+        }
+
+        // ── 2. Hra musí běžet ─────────────────────────────────────────────────
+        GameManager gm = plugin.getGameManager();
         if (gm == null || !gm.isRunning()) return;
 
         Player player = event.getPlayer();
         UUID   uid    = player.getUniqueId();
 
-        // ── 2. Hráč musí být ve hře (ne spectator) ───────────────────────────
-        SessionManager sm      = plugin.<SessionManager>getSessionManager();
-        PlayerSession  session = sm.getSession(player);
+        // ── 3. Hráč musí být ve stavu PLAYING ────────────────────────────────
+        SessionManager sm = plugin.getSessionManager();
+        if (sm == null) return;
+
+        PlayerSession session = sm.getSession(player);
         if (session == null || !session.isPlaying()) return;
 
         String teamId = session.getTeamId();
         if (teamId == null) return;
 
-        // ── 3. Kontrola ZMĚNY BLOKU (ne každý pohyb) ────────────────────────
+        // ── 4. Souřadnice nového bloku ────────────────────────────────────────
         int newBX = event.getTo().getBlockX();
         int newBY = event.getTo().getBlockY();
         int newBZ = event.getTo().getBlockZ();
 
+        // ── 5. Cache – jsme pořád na stejném bloku? ───────────────────────────
         long[] last = lastBlockCache.get(uid);
         if (last != null && last[0] == newBX && last[1] == newBY && last[2] == newBZ) {
-            return; // Hráč je na stejném bloku – nic neděláme
+            return;
         }
         lastBlockCache.put(uid, new long[]{newBX, newBY, newBZ});
 
-        // ── 4. Musíme být uvnitř arény ───────────────────────────────────────
-        var arena = gm.getCurrentArena();
+        // ── 6. Hráč musí být uvnitř hranic arény ─────────────────────────────
+        ArenaData arena = gm.getCurrentArena();
         if (arena == null) return;
+
         if (newBX < arena.minX() || newBX > arena.maxX()
                 || newBY < arena.minY() || newBY > arena.maxY()
-                || newBZ < arena.minZ() || newBZ > arena.maxZ()) return;
+                || newBZ < arena.minZ() || newBZ > arena.maxZ()) {
+            return;
+        }
 
-        // ── 5. Blok POD hráčem (Y-1) ─────────────────────────────────────────
+        // ── 7. Blok POD hráčem (Y-1) ─────────────────────────────────────────
         Block below = player.getWorld().getBlockAt(newBX, newBY - 1, newBZ);
-
-        // Blok musí být CONCRETE (jakékoliv barvy nebo WHITE) – ne jiný materiál
         if (!isConcrete(below.getType())) return;
 
-        // ── 6. Zjistíme materiál týmu ─────────────────────────────────────────
+        // ── 8. Materiál týmu ──────────────────────────────────────────────────
         TeamConfig team = plugin.getConfigManager().getTeam(teamId);
         if (team == null) return;
         Material teamMaterial = team.block();
 
-        // ── 7. Pokud blok již patří tomuto týmu – přeskočíme ─────────────────
+        // ── 9. Blok už patří tomuto týmu – nic nedělat ───────────────────────
         if (below.getType() == teamMaterial) return;
 
-        // ── 8. Obarvení – detekujeme přebarvení cizího bloku ─────────────────
-        Material previousMaterial = below.getType();
-        String   previousTeamId   = getTeamIdByMaterial(previousMaterial);
+        // ── 10. Detekce přebarvení – zjistíme původní tým ────────────────────
+        String previousTeamId = getTeamIdByMaterial(below.getType());
 
-        // Nastavíme nový blok (false = bez physics update pro výkon)
+        // ── 11. Nastavíme blok (false = bez physics update) ───────────────────
         below.setType(teamMaterial, false);
 
-        // ── 9. Aktualizace počítadel v GameManageru (O(1)) ──────────────────
+        // ── 12. Aktualizace počítadel v GameManageru ─────────────────────────
         gm.incrementTeamBlock(teamId);
 
-        if (previousTeamId != null && !previousTeamId.equals("white")) {
-            // Přebarvení cizího barevného bloku – odečteme od původního týmu
+        // Pokud byl blok barevný (cizí tým), odečteme původnímu
+        if (previousTeamId != null) {
             gm.decrementTeamBlock(previousTeamId);
         }
-        // WHITE_CONCRETE se nepočítá nikomu – žádný decrement
+        // WHITE_CONCRETE vrátí null → žádný decrement
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /**
-     * Vrátí true pokud je materiál libovolný CONCRETE.
-     */
     private boolean isConcrete(Material material) {
         String name = material.name();
-        return name.endsWith("_CONCRETE") || name.equals("WHITE_CONCRETE");
+        return name.endsWith("_CONCRETE");
     }
 
     /**
-     * Vrátí teamId podle materiálu bloku, nebo "white" pro WHITE_CONCRETE,
-     * nebo null pokud materiál neodpovídá žádnému týmu.
+     * Vrátí teamId podle materiálu, nebo null pro WHITE_CONCRETE / neznámý.
      */
     private String getTeamIdByMaterial(Material material) {
-        if (material == Material.WHITE_CONCRETE) return "white";
+        if (material == Material.WHITE_CONCRETE) return null;
         for (Map.Entry<String, TeamConfig> entry
                 : plugin.getConfigManager().getTeams().entrySet()) {
-            if (entry.getValue().block() == material) return entry.getKey();
+            if (entry.getValue().block() == material) {
+                return entry.getKey();
+            }
         }
         return null;
     }
 
-    /**
-     * Vyčistí cache hráče při odpojení nebo konci hry.
-     * Volá GameManager.cleanupAfterGame() nebo CombatListener.
-     */
     public void clearPlayerCache(UUID uuid) {
         lastBlockCache.remove(uuid);
     }
