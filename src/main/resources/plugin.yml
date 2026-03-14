@@ -1,4 +1,6 @@
 name: ChromaWars
-version: '1.0-SNAPSHOT'
+version: 1.0.0
 main: cz.xoam24.chromawars.ChromaWars
 api-version: '1.21'
+author: xoam24
+softdepend: [PlaceholderAPI]
