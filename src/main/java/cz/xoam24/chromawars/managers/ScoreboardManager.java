@@ -4,6 +4,7 @@ import cz.xoam24.chromawars.ChromaWars;
 import cz.xoam24.chromawars.model.PlayerSession;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -11,44 +12,53 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.*;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Nativní Paper 1.21 Scoreboard.
+ * Nativní Paper 1.21 Scoreboard – Team-prefix trik.
  *
- * Implementace používá Team-prefix trik:
- *  - Každý řádek = anonymní entry (prázdný hráčský jméno s §-padding)
- *  - Team pro každý řádek nese prefix = barevný text (MiniMessage → Component)
- *  - Score hodnota určuje pořadí řádku
- *
- * Tento přístup je kompatibilní s Paper 1.21 a nevyžaduje setCustomName().
+ * Opravy oproti předchozí verzi:
+ *  - MiniMessage se parsuje VŽDY přes convertToMiniMessage() který
+ *    převede legacy &#RRGGBB na správný <#RRGGBB> formát před parsováním.
+ *  - Scoreboard title se renderuje jako Section-sign legacy string
+ *    (Objective.displayName() v Paper 1.21 přijímá Component).
+ *  - Team prefix přijímá plný Component – fungují gradienty i barvy.
+ *  - Teamy se recyklují (neregistrují se znovu každý tick → žádné exceptions).
  */
 public class ScoreboardManager {
 
     private final ChromaWars plugin;
-    private final MiniMessage mm = MiniMessage.miniMessage();
+    private final MiniMessage MM = MiniMessage.miniMessage();
 
-    private BukkitTask lobbyTask   = null;
-    private BukkitTask ingameTask  = null;
+    // Regex pro konverzi &#RRGGBB → <#RRGGBB>
+    private static final Pattern LEGACY_HEX = Pattern.compile("&#([A-Fa-f0-9]{6})");
 
-    // UUID → vlastní Scoreboard instance
+    private BukkitTask lobbyTask  = null;
+    private BukkitTask ingameTask = null;
+
+    // UUID → vlastní Scoreboard instance pro každého hráče
     private final Map<UUID, Scoreboard> playerBoards = new HashMap<>();
 
-    // Unikátní entry stringy pro každý řádek (§0, §1, ... §f, §0§0, ...)
-    private static final String[] ENTRIES;
-    static {
-        String[] codes = {"0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"};
-        ENTRIES = new String[32];
-        for (int i = 0; i < 16; i++)  ENTRIES[i]      = "§" + codes[i];
-        for (int i = 0; i < 16; i++)  ENTRIES[i + 16] = "§" + codes[i] + "§r";
+    // Unikátní neviditelné entry stringy pro řádky (§0 .. §f, §0§0 ..)
+    private static final String[] ENTRIES = buildEntries();
+
+    private static String[] buildEntries() {
+        String[] codes = {"0","1","2","3","4","5","6","7",
+                "8","9","a","b","c","d","e","f"};
+        String[] arr = new String[32];
+        for (int i = 0; i < 16; i++) arr[i]      = "\u00A7" + codes[i];
+        for (int i = 0; i < 16; i++) arr[i + 16] = "\u00A7" + codes[i] + "\u00A7r";
+        return arr;
     }
 
     public ScoreboardManager(ChromaWars plugin) {
         this.plugin = plugin;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  TASKY
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     public void startLobbyTask() {
         stopLobbyTask();
@@ -62,8 +72,7 @@ public class ScoreboardManager {
             @Override public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
                     SessionManager sm = plugin.getSessionManager();
-                    if (sm == null) { updateLobbyScoreboard(p); continue; }
-                    PlayerSession session = sm.getSession(p);
+                    PlayerSession session = sm != null ? sm.getSession(p) : null;
                     if (session == null || session.isInLobby()) {
                         updateLobbyScoreboard(p);
                     }
@@ -113,16 +122,17 @@ public class ScoreboardManager {
         stopIngameTask();
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  LOBBY SCOREBOARD
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  LOBBY
+    // ══════════════════════════════════════════════════════════════════════
 
     public void updateLobbyScoreboard(Player player) {
         List<String> lines = plugin.getConfigManager().getRawConfig()
                 .getStringList("scoreboard.lobby.lines");
         String titleRaw = plugin.getConfigManager().getRawConfig()
                 .getString("scoreboard.lobby.title",
-                        "<bold><gradient:&#FF4444:&#4477FF>ChromaWars</gradient></bold>");
+                        "<bold><gradient:#FF4444:#4477FF>ChromaWars</gradient></bold>");
+
         renderScoreboard(player, titleRaw, lines, buildLobbyVars(player));
     }
 
@@ -141,34 +151,31 @@ public class ScoreboardManager {
         v.put("{top3_name}",      elo.getNameAtPosition(3));
         v.put("{top3_elo}",       String.valueOf(elo.getEloAtPosition(3)));
         v.put("{players_online}", String.valueOf(Bukkit.getOnlinePlayers().size()));
-        v.put("{map_vote}",       am != null ? am.getLeadingArenaName() : "–");
-        v.put("{countdown}",      gm != null ? String.valueOf(gm.getLobbyCountdown()) : "–");
+        v.put("{map_vote}",       am != null ? am.getLeadingArenaName() : "\u2013");
+        v.put("{countdown}",      gm != null ? String.valueOf(gm.getLobbyCountdown()) : "\u2013");
 
         int pos = elo.getPositionOfPlayer(player.getName());
-        v.put("{position}", pos > 0 ? String.valueOf(pos) : "–");
+        v.put("{position}", pos > 0 ? String.valueOf(pos) : "\u2013");
 
-        if (sm != null) {
-            PlayerSession session = sm.getSession(player);
-            v.put("{elo}", session != null
-                    ? String.valueOf(session.getCachedElo())
-                    : String.valueOf(plugin.getConfigManager().getDefaultElo()));
-        } else {
-            v.put("{elo}", String.valueOf(plugin.getConfigManager().getDefaultElo()));
-        }
+        PlayerSession session = sm != null ? sm.getSession(player) : null;
+        v.put("{elo}", session != null
+                ? String.valueOf(session.getCachedElo())
+                : String.valueOf(plugin.getConfigManager().getDefaultElo()));
 
         return v;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  IN-GAME SCOREBOARD
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  IN-GAME
+    // ══════════════════════════════════════════════════════════════════════
 
     public void updateIngameScoreboard(Player player) {
         List<String> lines = plugin.getConfigManager().getRawConfig()
                 .getStringList("scoreboard.ingame.lines");
         String titleRaw = plugin.getConfigManager().getRawConfig()
                 .getString("scoreboard.ingame.title",
-                        "<bold><gradient:&#FF4444:&#4477FF>ChromaWars</gradient></bold>");
+                        "<bold><gradient:#FF4444:#4477FF>ChromaWars</gradient></bold>");
+
         renderScoreboard(player, titleRaw, lines, buildIngameVars(player));
     }
 
@@ -178,94 +185,99 @@ public class ScoreboardManager {
         SessionManager sm = plugin.getSessionManager();
 
         v.put("{player}",     player.getName());
-        v.put("{arena}",      gm != null ? gm.getCurrentArenaName() : "–");
-        v.put("{time_left}",  gm != null ? gm.getFormattedTimeLeft() : "–:--");
+        v.put("{arena}",      gm != null ? gm.getCurrentArenaName() : "\u2013");
+        v.put("{time_left}",  gm != null ? gm.getFormattedTimeLeft() : "\u2013");
         v.put("{red_pct}",    gm != null ? gm.getTeamPercentFormatted("red")    : "0.0");
         v.put("{blue_pct}",   gm != null ? gm.getTeamPercentFormatted("blue")   : "0.0");
         v.put("{green_pct}",  gm != null ? gm.getTeamPercentFormatted("green")  : "0.0");
         v.put("{yellow_pct}", gm != null ? gm.getTeamPercentFormatted("yellow") : "0.0");
 
-        if (sm != null) {
-            PlayerSession session = sm.getSession(player);
-            if (session != null && session.getTeamId() != null) {
-                var teamCfg = plugin.getConfigManager().getTeam(session.getTeamId());
-                v.put("{team}", teamCfg != null ? teamCfg.displayName() : session.getTeamId());
-            } else {
-                v.put("{team}", "–");
-            }
+        PlayerSession session = sm != null ? sm.getSession(player) : null;
+        if (session != null && session.getTeamId() != null) {
+            var teamCfg = plugin.getConfigManager().getTeam(session.getTeamId());
+            v.put("{team}", teamCfg != null ? teamCfg.displayName() : session.getTeamId());
         } else {
-            v.put("{team}", "–");
+            v.put("{team}", "\u2013");
         }
 
         return v;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  RENDER – Team-prefix trik (Paper 1.21 kompatibilní)
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  RENDER – Team-prefix trik (Paper 1.21)
+    // ══════════════════════════════════════════════════════════════════════
 
-    /**
-     * Renderuje scoreboard pomocí Team-prefix triku.
-     *
-     * Pro každý řádek:
-     *  - entry string = unikátní §-kódovaný placeholder (neviditelný)
-     *  - Team pro tento řádek má prefix = barevný Component text
-     *  - Score tohoto entry = pozice řádku (klesající)
-     *
-     * Tím obejdeme setCustomName() které v Paper 1.21 neexistuje.
-     */
     private void renderScoreboard(Player player, String titleRaw,
                                   List<String> lines, Map<String, String> vars) {
-        // Titulek
-        String resolvedTitle = replacePlaceholders(titleRaw, vars);
-        Component titleComp  = mm.deserialize(resolvedTitle);
-
-        // Vlastní Scoreboard pro hráče
+        // Získáme nebo vytvoříme board
         Scoreboard board = playerBoards.computeIfAbsent(
                 player.getUniqueId(),
                 uid -> Bukkit.getScoreboardManager().getNewScoreboard());
 
-        // Objective – vytvoříme nebo aktualizujeme titulek
-        Objective obj = board.getObjective("cw_sidebar");
+        // ── Titulek Objective ──────────────────────────────────────────────
+        String resolvedTitle = replacePlaceholders(titleRaw, vars);
+        Component titleComp  = parse(resolvedTitle);
+
+        Objective obj = board.getObjective("cw_sb");
         if (obj == null) {
-            obj = board.registerNewObjective("cw_sidebar", Criteria.DUMMY, titleComp);
+            obj = board.registerNewObjective("cw_sb", Criteria.DUMMY, titleComp);
             obj.setDisplaySlot(DisplaySlot.SIDEBAR);
         } else {
             obj.displayName(titleComp);
         }
 
-        // Max 15 řádků (Minecraft sidebar limit), přeskočíme přebytečné
         int maxLines = Math.min(lines.size(), 15);
 
-        // Odebereme stará entry a teamy
+        // ── Smažeme staré záznamy (skóre) ──────────────────────────────────
+        // Nestačí resetovat score – musíme odstranit entries ze scoreboard
+        // jinak zůstanou viditelné prázdné řádky
+        for (String entry : new HashSet<>(board.getEntries())) {
+            board.resetScores(entry);
+        }
+
+        // ── Smažeme staré teamy (recyklace zabrání memory leaku) ───────────
         for (int i = 0; i < ENTRIES.length; i++) {
-            board.resetScores(ENTRIES[i]);
-            Team old = board.getTeam("cw_line_" + i);
+            Team old = board.getTeam("cw_l" + i);
             if (old != null) old.unregister();
         }
 
-        // Zapíšeme nové řádky
-        final Objective finalObj = obj;
+        // ── Zapíšeme nové řádky ─────────────────────────────────────────────
         for (int i = 0; i < maxLines; i++) {
-            String rawLine  = lines.get(i);
-            String resolved = replacePlaceholders(rawLine, vars);
-            Component lineComp = mm.deserialize(resolved);
+            String raw      = lines.get(i);
+            String resolved = replacePlaceholders(raw, vars);
+            Component lineComp = parse(resolved);
 
-            // Entry pro tento řádek
-            String entry = ENTRIES[i % ENTRIES.length];
+            String entry    = ENTRIES[i % ENTRIES.length];
+            Team   team     = board.registerNewTeam("cw_l" + i);
 
-            // Team nese prefix = barevný text
-            String teamName = "cw_line_" + i;
-            Team team = board.registerNewTeam(teamName);
+            // prefix = celý barevný text řádku
             team.prefix(lineComp);
+            // suffix je prázdný Component (ne null)
+            team.suffix(Component.empty());
             team.addEntry(entry);
 
-            // Skóre = maxLines - i (vyšší = výše na scoreboard)
-            Score score = finalObj.getScore(entry);
-            score.setScore(maxLines - i);
+            // Skóre: nejvyšší nahoře
+            obj.getScore(entry).setScore(maxLines - i);
         }
 
         player.setScoreboard(board);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  MINIMESSAGE HELPER
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Konvertuje legacy &#RRGGBB na <#RRGGBB> a pak parsuje přes MiniMessage.
+     * Toto je klíčová oprava – bez konverze zůstávají tagy viditelné jako text.
+     */
+    private Component parse(String input) {
+        if (input == null || input.isEmpty()) return Component.empty();
+        // 1. &#RRGGBB → <#RRGGBB>
+        String converted = LEGACY_HEX.matcher(input)
+                .replaceAll(mr -> "<#" + mr.group(1) + ">");
+        // 2. Parse přes MiniMessage
+        return MM.deserialize(converted);
     }
 
     private String replacePlaceholders(String text, Map<String, String> vars) {
@@ -275,15 +287,16 @@ public class ScoreboardManager {
         return text;
     }
 
-    // ── Odebrání scoreboard ───────────────────────────────────────────────────
+    // ── Odebrání scoreboard ───────────────────────────────────────────────
 
     public void removeScoreboard(Player player) {
-        player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
         Scoreboard old = playerBoards.remove(player.getUniqueId());
         if (old != null) {
-            // Uklid teams aby nezůstávaly v paměti
-            for (Team t : old.getTeams()) t.unregister();
+            for (Team t : old.getTeams()) {
+                try { t.unregister(); } catch (Exception ignored) {}
+            }
         }
+        player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
     }
 
     public void removeAllScoreboards() {

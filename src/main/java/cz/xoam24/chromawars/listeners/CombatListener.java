@@ -2,7 +2,6 @@ package cz.xoam24.chromawars.listeners;
 
 import cz.xoam24.chromawars.ChromaWars;
 import cz.xoam24.chromawars.managers.GameManager;
-import cz.xoam24.chromawars.managers.ScoreboardManager;
 import cz.xoam24.chromawars.managers.SessionManager;
 import cz.xoam24.chromawars.model.ArenaData;
 import cz.xoam24.chromawars.model.PlayerSession;
@@ -25,15 +24,16 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 public class CombatListener implements Listener {
 
     private final ChromaWars plugin;
     private final MiniMessage mm = MiniMessage.miniMessage();
+    private static final Pattern LEGACY_HEX = Pattern.compile("&#([A-Fa-f0-9]{6})");
 
-    private static final int DEFAULT_RESPAWN_SECONDS = 5;
+    private static final int RESPAWN_SECONDS = 5;
 
-    // UUID → respawn odpočet task
     private final Map<UUID, BukkitTask> respawnTasks = new ConcurrentHashMap<>();
 
     public CombatListener(ChromaWars plugin) {
@@ -41,9 +41,9 @@ public class CombatListener implements Listener {
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  DAMAGE – zachytíme letální poškození
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  DAMAGE
+    // ══════════════════════════════════════════════════════════════════════
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent event) {
@@ -65,9 +65,9 @@ public class CombatListener implements Listener {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  DEATH – záchytná síť pro nativní smrt (/kill, fall into void apod.)
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  DEATH (záchytná síť)
+    // ══════════════════════════════════════════════════════════════════════
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onDeath(PlayerDeathEvent event) {
@@ -82,7 +82,6 @@ public class CombatListener implements Listener {
         PlayerSession session = sm.getSession(player);
         if (session == null || !session.isPlaying()) return;
 
-        // Zrušíme nativní smrt: keep items, no death screen
         event.setCancelled(true);
 
         Bukkit.getScheduler().runTask(plugin, () -> {
@@ -92,13 +91,12 @@ public class CombatListener implements Listener {
         });
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  VOID DETECTION – pád pod dno arény
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  VOID DETECTION
+    // ══════════════════════════════════════════════════════════════════════
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
-        // Optimalizace: kontrolujeme pouze Y
         if (event.getFrom().getBlockY() == event.getTo().getBlockY()) return;
 
         GameManager gm = plugin.getGameManager();
@@ -115,18 +113,16 @@ public class CombatListener implements Listener {
         ArenaData arena = gm.getCurrentArena();
         if (arena == null) return;
 
-        // Pád více než 10 bloků pod dno arény
         if (event.getTo().getY() < arena.minY() - 10) {
             handleDeath(player, session, gm);
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  HANDLESMRT – přechod do SPECTATOR + respawn odpočet
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  HANDLE DEATH
+    // ══════════════════════════════════════════════════════════════════════
 
     private void handleDeath(Player player, PlayerSession session, GameManager gm) {
-        // Zabráníme dvojímu spuštění
         if (session.isSpectator()) return;
 
         session.setState(PlayerSession.State.SPECTATOR);
@@ -135,7 +131,7 @@ public class CombatListener implements Listener {
         player.setFoodLevel(20);
         player.setSaturation(20);
 
-        // Teleport do středu arény (nahoře pro výhled)
+        // Teleport do středu arény (výše pro dobrý výhled)
         ArenaData arena = gm.getCurrentArena();
         if (arena != null && arena.getWorld() != null) {
             Location center = arena.getCenter();
@@ -143,16 +139,13 @@ public class CombatListener implements Listener {
             player.teleport(center);
         }
 
-        // Zobrazíme "zemřel jsi" title
         showDeathTitle(player);
-
-        // Spustíme odpočet
-        startRespawnCountdown(player, session, gm, DEFAULT_RESPAWN_SECONDS);
+        startRespawnCountdown(player, session, gm, RESPAWN_SECONDS);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  RESPAWN ODPOČET
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     private void startRespawnCountdown(Player player, PlayerSession session,
                                        GameManager gm, int totalSeconds) {
@@ -163,17 +156,11 @@ public class CombatListener implements Listener {
 
             @Override
             public void run() {
-                if (!player.isOnline()) {
+                if (!player.isOnline() || !gm.isRunning()) {
                     cancel();
                     respawnTasks.remove(player.getUniqueId());
                     return;
                 }
-                if (!gm.isRunning()) {
-                    cancel();
-                    respawnTasks.remove(player.getUniqueId());
-                    return;
-                }
-
                 if (remaining > 0) {
                     showRespawnCountdownTitle(player, remaining);
                     remaining--;
@@ -188,9 +175,9 @@ public class CombatListener implements Listener {
         respawnTasks.put(player.getUniqueId(), task);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  RESPAWN – návrat do PLAYING
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  PERFORM RESPAWN
+    // ══════════════════════════════════════════════════════════════════════
 
     private void performRespawn(Player player, PlayerSession session, GameManager gm) {
         if (!player.isOnline()) return;
@@ -201,52 +188,40 @@ public class CombatListener implements Listener {
         player.setFoodLevel(20);
         player.setSaturation(20);
 
-        // Brnění zpět
         if (session.getTeamId() != null) {
             gm.giveTeamArmorPublic(player, session.getTeamId());
         }
 
-        // Teleport na náhodné místo v aréně
-        teleportToRandomArenaSpot(player, gm);
+        // ── Spawn: preferujeme nastavený team spawn ────────────────────────
+        Location spawnLoc = null;
+        if (session.getTeamId() != null && gm.getCurrentArena() != null) {
+            spawnLoc = gm.getTeamSpawnLocation(
+                    gm.getCurrentArena().name(), session.getTeamId());
+        }
+        if (spawnLoc != null) {
+            player.teleport(spawnLoc);
+        } else {
+            gm.teleportToRandomArenaSpot(player);
+        }
 
-        // Respawn title
         showRespawnTitle(player);
     }
 
-    private void teleportToRandomArenaSpot(Player player, GameManager gm) {
-        ArenaData arena = gm.getCurrentArena();
-        if (arena == null || arena.getWorld() == null) return;
-
-        java.util.Random rng = new java.util.Random();
-        int rangeX = arena.maxX() - arena.minX();
-        int rangeZ = arena.maxZ() - arena.minZ();
-        int x = arena.minX() + (rangeX > 0 ? rng.nextInt(rangeX + 1) : 0);
-        int z = arena.minZ() + (rangeZ > 0 ? rng.nextInt(rangeZ + 1) : 0);
-        int y = arena.minY() + 2;
-
-        Location loc = new Location(arena.getWorld(), x + 0.5, y, z + 0.5);
-        player.teleport(loc);
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    //  ODPOJENÍ BĚHEM HRY
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  QUIT
+    // ══════════════════════════════════════════════════════════════════════
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
-        UUID uid = player.getUniqueId();
-
-        cancelRespawnTask(uid);
-
-        // Vyčistíme turf cache
+        cancelRespawnTask(player.getUniqueId());
         TurfListener tl = plugin.getTurfListener();
-        if (tl != null) tl.clearPlayerCache(uid);
+        if (tl != null) tl.clearPlayerCache(player.getUniqueId());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  TITLE HELPERS
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     private void showDeathTitle(Player player) {
         ConfigurationSection sec = plugin.getConfigManager().getRawConfig()
@@ -255,9 +230,8 @@ public class CombatListener implements Listener {
                 ? sec.getString("title", "<bold><red>✖ Zemřel jsi!</red></bold>")
                 : "<bold><red>✖ Zemřel jsi!</red></bold>";
         String sub = sec != null
-                ? sec.getString("subtitle", "<gray>Respawn za " + DEFAULT_RESPAWN_SECONDS + "s...</gray>")
-                .replace("<time>", String.valueOf(DEFAULT_RESPAWN_SECONDS))
-                : "<gray>Respawn za " + DEFAULT_RESPAWN_SECONDS + "s...</gray>";
+                ? sec.getString("subtitle", "<gray>Respawn za " + RESPAWN_SECONDS + "s...</gray>")
+                : "<gray>Respawn za " + RESPAWN_SECONDS + "s...</gray>";
         int fi = sec != null ? sec.getInt("fade-in",  5) : 5;
         int st = sec != null ? sec.getInt("stay",    40) : 40;
         int fo = sec != null ? sec.getInt("fade-out", 5) : 5;
@@ -295,25 +269,31 @@ public class CombatListener implements Listener {
 
     private Title buildTitle(String title, String subtitle, int fi, int st, int fo) {
         return Title.title(
-                mm.deserialize(title),
-                mm.deserialize(subtitle),
+                parseMM(title),
+                parseMM(subtitle),
                 Title.Times.times(
                         Duration.ofMillis(fi * 50L),
                         Duration.ofMillis(st * 50L),
                         Duration.ofMillis(fo * 50L)));
     }
 
-    // ── Cleanup helpers ───────────────────────────────────────────────────────
+    private net.kyori.adventure.text.Component parseMM(String input) {
+        if (input == null || input.isBlank())
+            return net.kyori.adventure.text.Component.empty();
+        String converted = LEGACY_HEX.matcher(input)
+                .replaceAll(mr -> "<#" + mr.group(1) + ">");
+        return mm.deserialize(converted);
+    }
+
+    // ── Cleanup ───────────────────────────────────────────────────────────
 
     private void cancelRespawnTask(UUID uuid) {
-        BukkitTask task = respawnTasks.remove(uuid);
-        if (task != null && !task.isCancelled()) task.cancel();
+        BukkitTask t = respawnTasks.remove(uuid);
+        if (t != null && !t.isCancelled()) t.cancel();
     }
 
     public void cancelAllRespawnTasks() {
-        respawnTasks.forEach((uid, task) -> {
-            if (task != null && !task.isCancelled()) task.cancel();
-        });
+        respawnTasks.forEach((uid, t) -> { if (t != null && !t.isCancelled()) t.cancel(); });
         respawnTasks.clear();
     }
 }

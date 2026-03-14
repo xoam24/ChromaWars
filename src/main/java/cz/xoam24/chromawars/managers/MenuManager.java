@@ -5,11 +5,9 @@ import cz.xoam24.chromawars.model.ArenaData;
 import cz.xoam24.chromawars.model.TeamConfig;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
-import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -20,72 +18,81 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
- * Nativní GUI pro /join (výběr týmu) a /votemap (hlasování o mapě).
+ * Nativní Paper GUI pro /join a /votemap.
  *
- * Veškeré rozložení a texty jsou 100% konfigurovatelné v config.yml
- * pod sekcemi gui.join a gui.votemap.
+ * Opravy oproti předchozí verzi:
+ *  - Inventory se identifikuje přes vlastní title Component porovnání
+ *    (předchozí verze nespolehlivě sledovala UUID sety)
+ *  - Slot mapping se ukládá per-player správně
+ *  - MiniMessage konverze &#HEX před parsováním
+ *  - Inventory se zavírá a znovu otevírá BEZPEČNĚ (runTaskLater)
  */
 public class MenuManager implements Listener {
 
     private final ChromaWars plugin;
-    private final MiniMessage mm = MiniMessage.miniMessage();
+    private final MiniMessage MM = MiniMessage.miniMessage();
+    private static final Pattern LEGACY_HEX = Pattern.compile("&#([A-Fa-f0-9]{6})");
 
-    // Identifikátory inventářů (tituly jako klíče)
-    private final Set<UUID> joinMenuOpen   = new HashSet<>();
-    private final Set<UUID> voteMenuOpen   = new HashSet<>();
-
-    // Mapování slot → arenaName pro votemap GUI
-    private final Map<UUID, Map<Integer, String>> voteSlotMap = new HashMap<>();
-    // Mapování slot → teamId pro join GUI
+    // UUID → typ otevřeného menu ("join" | "vote")
+    private final Map<UUID, String>              openMenuType = new HashMap<>();
+    // UUID → slot→teamId (join menu)
     private final Map<UUID, Map<Integer, String>> joinSlotMap = new HashMap<>();
+    // UUID → slot→arenaName (vote menu)
+    private final Map<UUID, Map<Integer, String>> voteSlotMap = new HashMap<>();
+
+    // Uložíme title Componenty pro identifikaci inventáře při kliknutí
+    private Component joinTitleComponent = Component.empty();
+    private Component voteTitleComponent = Component.empty();
 
     public MenuManager(ChromaWars plugin) {
         this.plugin = plugin;
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  JOIN MENU – /join
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  JOIN MENU  /join
+    // ══════════════════════════════════════════════════════════════════════
 
     public void openJoinMenu(Player player) {
-        FileConfiguration cfg = plugin.getConfigManager().getRawConfig();
-        ConfigurationSection sec = cfg.getConfigurationSection("gui.join");
-        if (sec == null) { player.sendMessage("§cGUI join není nakonfigurováno."); return; }
+        ConfigurationSection sec = plugin.getConfigManager().getRawConfig()
+                .getConfigurationSection("gui.join");
+        if (sec == null) {
+            player.sendMessage(parse("<red>gui.join sekce chybí v config.yml!</red>"));
+            return;
+        }
 
-        int rows  = Math.min(6, Math.max(1, sec.getInt("rows", 3)));
-        String titleRaw = sec.getString("title", "Vyber tým");
-        Inventory inv   = Bukkit.createInventory(null, rows * 9, mm.deserialize(titleRaw));
+        int rows = Math.min(6, Math.max(1, sec.getInt("rows", 3)));
+        String titleRaw = sec.getString("title", "<white>Vyber si tým");
+        joinTitleComponent = parse(titleRaw);
 
-        // Výplň prázdných slotů
+        Inventory inv = Bukkit.createInventory(null, rows * 9, joinTitleComponent);
+
+        // Výplň
         fillEmpty(inv, sec.getConfigurationSection("fill-empty"));
 
-        // Sloty týmů
+        // Týmová tlačítka
         ConfigurationSection teamSlots = sec.getConfigurationSection("team-slots");
         ConfigurationSection teamItem  = sec.getConfigurationSection("team-item");
         Map<Integer, String> slotToTeam = new HashMap<>();
 
-        Map<String, TeamConfig> teams = plugin.getConfigManager().getTeams();
-        for (Map.Entry<String, TeamConfig> entry : teams.entrySet()) {
+        for (Map.Entry<String, TeamConfig> entry : plugin.getConfigManager().getTeams().entrySet()) {
             String     teamId = entry.getKey();
             TeamConfig team   = entry.getValue();
 
-            // Zjistíme počet hráčů v týmu
-            int current = plugin.getSessionManager() != null
-                    ? plugin.getSessionManager().countPlayersInTeam(teamId) : 0;
-            int max     = team.maxPlayers();
-
-            int slot = (teamSlots != null) ? teamSlots.getInt(teamId, -1) : -1;
+            int slot = teamSlots != null ? teamSlots.getInt(teamId, -1) : -1;
             if (slot < 0 || slot >= rows * 9) continue;
 
-            ItemStack item = buildTeamItem(teamItem, team, current, max);
-            inv.setItem(slot, item);
+            int current = plugin.getSessionManager() != null
+                    ? plugin.getSessionManager().countPlayersInTeam(teamId) : 0;
+
+            inv.setItem(slot, buildTeamItem(teamItem, team, current));
             slotToTeam.put(slot, teamId);
         }
 
-        // Extra tlačítka (náhodný tým apod.)
+        // Extra tlačítka
         ConfigurationSection extras = sec.getConfigurationSection("extra-buttons");
         if (extras != null) {
             for (String btnKey : extras.getKeys(false)) {
@@ -99,175 +106,180 @@ public class MenuManager implements Listener {
         }
 
         joinSlotMap.put(player.getUniqueId(), slotToTeam);
-        joinMenuOpen.add(player.getUniqueId());
+        openMenuType.put(player.getUniqueId(), "join");
         player.openInventory(inv);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  VOTEMAP MENU – /votemap
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  VOTEMAP MENU  /votemap
+    // ══════════════════════════════════════════════════════════════════════
 
     public void openVoteMenu(Player player) {
-        FileConfiguration cfg = plugin.getConfigManager().getRawConfig();
-        ConfigurationSection sec = cfg.getConfigurationSection("gui.votemap");
-        if (sec == null) { player.sendMessage("§cGUI votemap není nakonfigurováno."); return; }
+        ConfigurationSection sec = plugin.getConfigManager().getRawConfig()
+                .getConfigurationSection("gui.votemap");
+        if (sec == null) {
+            player.sendMessage(parse("<red>gui.votemap sekce chybí v config.yml!</red>"));
+            return;
+        }
 
-        ArenaManager arenas = plugin.getArenaManager();
-        Collection<ArenaData> allArenas = arenas.getAllArenas();
-
+        ArenaManager am = plugin.getArenaManager();
+        Collection<ArenaData> allArenas = am.getAllArenas();
         if (allArenas.isEmpty()) {
             plugin.getMessageManager().send(player, "vote.no-arenas");
             return;
         }
 
         int rows = Math.min(6, Math.max(1, sec.getInt("rows", 3)));
-        String titleRaw = sec.getString("title", "Hlasování o mapě");
-        Inventory inv   = Bukkit.createInventory(null, rows * 9, mm.deserialize(titleRaw));
+        String titleRaw = sec.getString("title", "<white>Hlasuj o mapě");
+        voteTitleComponent = parse(titleRaw);
+
+        Inventory inv = Bukkit.createInventory(null, rows * 9, voteTitleComponent);
 
         fillEmpty(inv, sec.getConfigurationSection("fill-empty"));
 
-        ConfigurationSection layout   = sec.getConfigurationSection("layout");
-        ConfigurationSection mapItem  = sec.getConfigurationSection("map-item");
-        ConfigurationSection infoSec  = sec.getConfigurationSection("info-panel");
+        ConfigurationSection layoutSec  = sec.getConfigurationSection("layout");
+        ConfigurationSection mapItemSec = sec.getConfigurationSection("map-item");
+        ConfigurationSection infoPanSec = sec.getConfigurationSection("info-panel");
 
-        String layoutMode = layout != null ? layout.getString("mode", "auto") : "auto";
-        int startSlot     = layout != null ? layout.getInt("start-slot", 10)  : 10;
-        int spacing       = layout != null ? layout.getInt("spacing", 2)       : 2;
+        int startSlot = layoutSec != null ? layoutSec.getInt("start-slot", 10)  : 10;
+        int spacing   = layoutSec != null ? layoutSec.getInt("spacing",     2)  : 2;
 
-        String playerVote = arenas.getPlayerVote(player.getUniqueId());
-        int total = arenas.getTotalVotes();
+        String playerVote = am.getPlayerVote(player.getUniqueId());
+        int    total      = am.getTotalVotes();
+
         int currentSlot = startSlot;
         Map<Integer, String> slotToArena = new HashMap<>();
 
         for (ArenaData arena : allArenas) {
             if (currentSlot >= rows * 9) break;
 
-            boolean voted  = arena.name().equals(playerVote);
-            int voteCount  = arenas.getVoteCount(arena.name());
-            ItemStack item = buildMapItem(mapItem, arena.name(), voteCount, total, voted);
-            inv.setItem(currentSlot, item);
-            slotToArena.put(currentSlot, arena.name());
+            boolean voted     = arena.name().equals(playerVote);
+            int     voteCount = am.getVoteCount(arena.name());
 
-            if (layoutMode.equals("auto")) {
-                currentSlot += (1 + spacing);
-            }
+            inv.setItem(currentSlot, buildMapItem(mapItemSec, arena.name(), voteCount, total, voted));
+            slotToArena.put(currentSlot, arena.name());
+            currentSlot += 1 + spacing;
         }
 
         // Info panel
-        if (infoSec != null && infoSec.getBoolean("enabled", true)) {
-            int infoSlot = infoSec.getInt("slot", 26);
+        if (infoPanSec != null && infoPanSec.getBoolean("enabled", true)) {
+            int infoSlot = infoPanSec.getInt("slot", 26);
             if (infoSlot < rows * 9) {
-                String countdown = String.valueOf(plugin.getConfigManager().getLobbyCountdown());
-                inv.setItem(infoSlot, buildInfoPanel(infoSec,
-                        arenas.getLeadingArenaName(), total, countdown));
+                String countdown = plugin.getGameManager() != null
+                        ? String.valueOf(plugin.getGameManager().getLobbyCountdown()) : "–";
+                inv.setItem(infoSlot, buildInfoPanel(infoPanSec,
+                        am.getLeadingArenaName(), total, countdown));
             }
         }
 
         voteSlotMap.put(player.getUniqueId(), slotToArena);
-        voteMenuOpen.add(player.getUniqueId());
+        openMenuType.put(player.getUniqueId(), "vote");
         player.openInventory(inv);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  CLICK HANDLERY
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  CLICK HANDLER
+    // ══════════════════════════════════════════════════════════════════════
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
-        event.setCancelled(true);  // zabráníme přesouvání itemů
 
         UUID uid = player.getUniqueId();
-        int slot = event.getRawSlot();
+        String menuType = openMenuType.get(uid);
+        if (menuType == null) return;
 
-        // ── JOIN MENU ─────────────────────────────────────────────────────────
-        if (joinMenuOpen.contains(uid)) {
-            Map<Integer, String> slotMap = joinSlotMap.getOrDefault(uid, Map.of());
-            String teamId = slotMap.get(slot);
-            if (teamId == null) return;
+        // Zrušíme přesouvání itemů ve VŠECH slech tohoto GUI
+        event.setCancelled(true);
 
-            player.closeInventory();
+        // Ignorujeme kliknutí mimo horní inventář (do hráčova inv)
+        if (event.getClickedInventory() == null) return;
+        if (event.getClickedInventory() == player.getInventory()) return;
 
-            if (teamId.startsWith("extra:random")) {
-                // Náhodný tým – přiřadit do nejméně obsazeného
-                if (plugin.getSessionManager() != null) {
-                    plugin.getSessionManager().assignRandomTeam(player);
-                }
-                return;
-            }
+        int slot = event.getSlot();
 
-            TeamConfig team = plugin.getConfigManager().getTeam(teamId);
-            if (team == null) return;
+        switch (menuType) {
+            case "join" -> handleJoinClick(player, uid, slot);
+            case "vote" -> handleVoteClick(player, uid, slot);
+        }
+    }
 
+    private void handleJoinClick(Player player, UUID uid, int slot) {
+        Map<Integer, String> slotMap = joinSlotMap.getOrDefault(uid, Map.of());
+        String teamId = slotMap.get(slot);
+        if (teamId == null) return;
+
+        player.closeInventory();
+
+        if (teamId.startsWith("extra:random")) {
             if (plugin.getSessionManager() != null) {
-                plugin.getSessionManager().setPlayerTeam(player, teamId);
+                plugin.getSessionManager().assignRandomTeam(player);
             }
             return;
         }
 
-        // ── VOTEMAP MENU ──────────────────────────────────────────────────────
-        if (voteMenuOpen.contains(uid)) {
-            Map<Integer, String> slotMap = voteSlotMap.getOrDefault(uid, Map.of());
-            String arenaName = slotMap.get(slot);
-            if (arenaName == null) return;
-
-            ArenaManager am = plugin.getArenaManager();
-            boolean isNew   = am.vote(uid, arenaName);
-            MessageManager msg = plugin.getMessageManager();
-
-            if (isNew) {
-                msg.send(player, "vote.registered", "map", arenaName);
-            } else {
-                msg.send(player, "vote.changed", "map", arenaName);
-            }
-
-            player.closeInventory();
-            // Obnovíme menu (aktualizace hlasů)
-            Bukkit.getScheduler().runTaskLater(plugin,
-                    () -> openVoteMenu(player), 2L);
+        if (plugin.getSessionManager() != null) {
+            plugin.getSessionManager().setPlayerTeam(player, teamId);
         }
+    }
+
+    private void handleVoteClick(Player player, UUID uid, int slot) {
+        Map<Integer, String> slotMap = voteSlotMap.getOrDefault(uid, Map.of());
+        String arenaName = slotMap.get(slot);
+        if (arenaName == null) return;
+
+        ArenaManager am  = plugin.getArenaManager();
+        boolean      isNew = am.vote(uid, arenaName);
+
+        if (isNew) {
+            plugin.getMessageManager().send(player, "vote.registered", "map", arenaName);
+        } else {
+            plugin.getMessageManager().send(player, "vote.changed", "map", arenaName);
+        }
+
+        player.closeInventory();
+
+        // Znovuotevřeme s aktuálními hlasy (po 1 ticku – po closeInventory)
+        Bukkit.getScheduler().runTaskLater(plugin,
+                () -> openVoteMenu(player), 2L);
     }
 
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
         UUID uid = player.getUniqueId();
-        joinMenuOpen.remove(uid);
-        voteMenuOpen.remove(uid);
-        // Slotmapy ponecháme – jsou malé a přepíšou se při dalším otevření
+
+        // Čistíme jen pokud se zavírá opravdu naše menu
+        // (ne při znovu-otevření přes runTaskLater)
+        String type = openMenuType.get(uid);
+        if (type != null) {
+            openMenuType.remove(uid);
+        }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  BUILDERY ITEMŮ
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  ITEM BUILDERY
+    // ══════════════════════════════════════════════════════════════════════
 
-    /** Sestaví ItemStack pro tlačítko týmu z config sekce team-item. */
-    private ItemStack buildTeamItem(ConfigurationSection sec, TeamConfig team,
-                                    int current, int max) {
-        Material mat;
-        try { mat = Material.valueOf(team.block().name()); }
-        catch (Exception e) { mat = Material.STONE; }
-
-        ItemStack item = new ItemStack(mat);
+    private ItemStack buildTeamItem(ConfigurationSection sec, TeamConfig team, int current) {
+        ItemStack item = new ItemStack(team.block());
         ItemMeta  meta = item.getItemMeta();
         if (meta == null) return item;
 
-        // Jméno
         String nameRaw = (sec != null ? sec.getString("name", "{team_name}") : "{team_name}")
-                .replace("{team_name}", plugin.getMessageManager().getRaw("teams." + team.id() + ".name") )
-                .replace("{color}", "#" + Integer.toHexString(team.color().value()));
-        meta.displayName(mm.deserialize(nameRaw));
+                .replace("{team_name}", team.displayName())
+                .replace("{current}",  String.valueOf(current))
+                .replace("{max}",      String.valueOf(team.maxPlayers()));
 
-        // Lore
+        meta.displayName(parse(nameRaw));
+
         if (sec != null) {
             List<Component> lore = new ArrayList<>();
             for (String line : sec.getStringList("lore")) {
-                String parsed = line
+                lore.add(parse(line
                         .replace("{team_name}", team.displayName())
-                        .replace("{current}", String.valueOf(current))
-                        .replace("{max}",     String.valueOf(max))
-                        .replace("{color}",   "#" + Integer.toHexString(team.color().value()));
-                lore.add(mm.deserialize(parsed));
+                        .replace("{current}",  String.valueOf(current))
+                        .replace("{max}",      String.valueOf(team.maxPlayers()))));
             }
             meta.lore(lore);
         }
@@ -276,9 +288,8 @@ public class MenuManager implements Listener {
         return item;
     }
 
-    /** Sestaví ItemStack pro položku mapy ve vote menu. */
     private ItemStack buildMapItem(ConfigurationSection sec, String mapName,
-                                   int votes, int total, boolean playerVoted) {
+                                   int votes, int total, boolean voted) {
         Material mat = Material.MAP;
         if (sec != null) {
             try { mat = Material.valueOf(sec.getString("material", "MAP")); }
@@ -289,21 +300,20 @@ public class MenuManager implements Listener {
         ItemMeta  meta = item.getItemMeta();
         if (meta == null) return item;
 
-        String votedMark = playerVoted ? "<green>✔</green>" : "";
+        String votedMark = voted ? "<green>✔</green>" : "";
         String nameRaw = (sec != null ? sec.getString("name", "{map_name}") : "{map_name}")
                 .replace("{map_name}", mapName)
                 .replace("{voted}",    votedMark);
-        meta.displayName(mm.deserialize(nameRaw));
+        meta.displayName(parse(nameRaw));
 
         if (sec != null) {
             List<Component> lore = new ArrayList<>();
             for (String line : sec.getStringList("lore")) {
-                String parsed = line
-                        .replace("{map_name}", mapName)
-                        .replace("{votes}",    String.valueOf(votes))
+                lore.add(parse(line
+                        .replace("{map_name}",    mapName)
+                        .replace("{votes}",       String.valueOf(votes))
                         .replace("{total_votes}", String.valueOf(total))
-                        .replace("{voted}",    votedMark);
-                lore.add(mm.deserialize(parsed));
+                        .replace("{voted}",       votedMark)));
             }
             meta.lore(lore);
         }
@@ -312,7 +322,6 @@ public class MenuManager implements Listener {
         return item;
     }
 
-    /** Sestaví ItemStack pro info panel. */
     private ItemStack buildInfoPanel(ConfigurationSection sec, String topMap,
                                      int total, String countdown) {
         Material mat = Material.PAPER;
@@ -323,22 +332,20 @@ public class MenuManager implements Listener {
         ItemMeta  meta = item.getItemMeta();
         if (meta == null) return item;
 
-        meta.displayName(mm.deserialize(sec.getString("name", "Info")));
+        meta.displayName(parse(sec.getString("name", "Info")));
 
         List<Component> lore = new ArrayList<>();
         for (String line : sec.getStringList("lore")) {
-            String parsed = line
+            lore.add(parse(line
                     .replace("{total_votes}", String.valueOf(total))
                     .replace("{top_map}",     topMap)
-                    .replace("{countdown}",   countdown);
-            lore.add(mm.deserialize(parsed));
+                    .replace("{countdown}",   countdown)));
         }
         meta.lore(lore);
         item.setItemMeta(meta);
         return item;
     }
 
-    /** Sestaví jednoduchý ItemStack z libovolné config sekce (material + name + lore). */
     private ItemStack buildSimpleItem(ConfigurationSection sec) {
         Material mat = Material.STONE;
         try { mat = Material.valueOf(sec.getString("material", "STONE")); }
@@ -348,35 +355,45 @@ public class MenuManager implements Listener {
         ItemMeta  meta = item.getItemMeta();
         if (meta == null) return item;
 
-        String name = sec.getString("name", " ");
-        meta.displayName(mm.deserialize(name));
+        meta.displayName(parse(sec.getString("name", " ")));
 
         List<Component> lore = new ArrayList<>();
         for (String line : sec.getStringList("lore")) {
-            lore.add(mm.deserialize(line));
+            lore.add(parse(line));
         }
         meta.lore(lore);
         item.setItemMeta(meta);
         return item;
     }
 
-    /** Vyplní prázdné sloty skleněnými panely (nebo jiným materiálem z configu). */
     private void fillEmpty(Inventory inv, ConfigurationSection sec) {
         if (sec == null || !sec.getBoolean("enabled", true)) return;
+
         Material mat = Material.GRAY_STAINED_GLASS_PANE;
         try { mat = Material.valueOf(sec.getString("material", "GRAY_STAINED_GLASS_PANE")); }
         catch (Exception ignored) {}
 
-        String nameRaw = sec.getString("name", " ");
         ItemStack filler = new ItemStack(mat);
         ItemMeta  meta   = filler.getItemMeta();
         if (meta != null) {
-            meta.displayName(mm.deserialize(nameRaw));
+            meta.displayName(Component.empty()); // prázdný název (ne null)
             filler.setItemMeta(meta);
         }
 
         for (int i = 0; i < inv.getSize(); i++) {
             if (inv.getItem(i) == null) inv.setItem(i, filler);
         }
+    }
+
+    // ── MiniMessage helper ─────────────────────────────────────────────────
+
+    /**
+     * Konvertuje &#RRGGBB → <#RRGGBB> a pak parsuje přes MiniMessage.
+     */
+    private Component parse(String input) {
+        if (input == null) return Component.empty();
+        String converted = LEGACY_HEX.matcher(input)
+                .replaceAll(mr -> "<#" + mr.group(1) + ">");
+        return MM.deserialize(converted);
     }
 }

@@ -12,15 +12,13 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Načítá messages.yml a poskytuje metody pro odesílání Adventure komponent.
+ * Načítá messages.yml a poskytuje metody pro odesílání zpráv.
  *
- * Podporované formáty barev v messages.yml:
- *  - MiniMessage tagy:  <red>, <#FF0000>, <gradient:red:blue>, <rainbow>
- *  - Legacy &#RRGGBB:  &#FF4444text  (automaticky konvertováno na MiniMessage)
+ * Klíčová oprava: &#RRGGBB se konvertuje na <#RRGGBB> PŘED parsováním
+ * přes MiniMessage, takže gradienty a HEX barvy fungují správně.
  */
 public class MessageManager {
 
@@ -29,52 +27,61 @@ public class MessageManager {
 
     private final ChromaWars plugin;
     private final Map<String, String> messages = new HashMap<>();
-    private String prefix;
+    private String prefix = "";
 
     public MessageManager(ChromaWars plugin) {
         this.plugin = plugin;
     }
 
-    // ── Načtení messages.yml ──────────────────────────────────────────────────
+    // ── Načtení messages.yml ──────────────────────────────────────────────
 
     public void load() {
         File file = new File(plugin.getDataFolder(), "messages.yml");
         if (!file.exists()) {
             plugin.saveResource("messages.yml", false);
         }
+
         FileConfiguration cfg = YamlConfiguration.loadConfiguration(file);
         messages.clear();
 
-        // Rekurzivně načteme všechny klíče (tečkový zápis)
-        for (String key : cfg.getKeys(true)) {
-            if (cfg.isString(key)) {
-                messages.put(key, cfg.getString(key, ""));
-            }
-        }
+        // Rekurzivně načteme všechny string klíče (tečkový zápis)
+        flattenConfig(cfg, "", messages);
 
-        prefix = messages.getOrDefault("prefix", "<gray>[<gradient:#FF4444:#4477FF>ChromaWars</gradient>]</gray> ");
+        prefix = messages.getOrDefault("prefix",
+                "<gray>[<gradient:#FF4444:#4477FF>ChromaWars</gradient>]</gray> ");
+
         plugin.getLogger().info("Zprávy načteny: " + messages.size() + " klíčů.");
     }
 
-    // ── Překlad zprávy na Component ───────────────────────────────────────────
+    /** Rekurzivně flattenuje YAML sekce do Map s tečkovými klíči. */
+    private void flattenConfig(org.bukkit.configuration.ConfigurationSection section,
+                               String prefix, Map<String, String> result) {
+        for (String key : section.getKeys(false)) {
+            String fullKey = prefix.isEmpty() ? key : prefix + "." + key;
+            if (section.isConfigurationSection(key)) {
+                flattenConfig(section.getConfigurationSection(key), fullKey, result);
+            } else if (section.isString(key) || section.isInt(key) || section.isDouble(key)) {
+                result.put(fullKey, section.getString(key, ""));
+            }
+        }
+    }
+
+    // ── Parsování ─────────────────────────────────────────────────────────
 
     /**
-     * Přeloží klíč na Adventure Component.
-     * Placeholdery {placeholder} jsou nahrazeny před parsováním.
-     *
-     * @param key     klíč v messages.yml (tečkový zápis, např. "game.start")
-     * @param placeholders  páry: klíč, hodnota, klíč, hodnota, ...
+     * Vrátí Component pro daný klíč s nahrazenými placeholdery.
+     * Placeholdery: střídají se klíč, hodnota, klíč, hodnota...
+     * Hodnoty jsou parsovány jako MiniMessage (mohou obsahovat barvy).
      */
     public Component get(String key, String... placeholders) {
         String raw = messages.getOrDefault(key, "<red>Chybí zpráva: " + key + "</red>");
-        raw = convertLegacyHex(raw);
+        raw = convertHex(raw);
 
-        // Sestavíme TagResolver z páru klíč/hodnota
         if (placeholders.length >= 2) {
             TagResolver.Builder resolver = TagResolver.builder();
             for (int i = 0; i + 1 < placeholders.length; i += 2) {
-                final String pKey = placeholders[i];
-                final String pVal = placeholders[i + 1];
+                String pKey = placeholders[i];
+                String pVal = convertHex(placeholders[i + 1]);
                 resolver.resolver(Placeholder.parsed(pKey, pVal));
             }
             return MM.deserialize(raw, resolver.build());
@@ -83,40 +90,35 @@ public class MessageManager {
     }
 
     /**
-     * Odešle zprávu s prefixem příjemci.
+     * Odešle zprávu s prefixem.
      */
     public void send(CommandSender sender, String key, String... placeholders) {
-        Component prefixComp = MM.deserialize(convertLegacyHex(prefix));
+        Component prefixComp = MM.deserialize(convertHex(prefix));
         sender.sendMessage(prefixComp.append(get(key, placeholders)));
     }
 
     /**
-     * Vrátí surový (neparsovaný) text pro zprávu – užitečné pro scoreboardy a tituly.
+     * Vrátí surový (neparsovaný) string pro klíč.
+     * Použít jen pro účely kde se string zpracovává jindy (např. scoreboard).
      */
     public String getRaw(String key) {
         return messages.getOrDefault(key, key);
     }
 
     /**
-     * Konvertuje legacy formát &#RRGGBB na MiniMessage <#RRGGBB>.
-     */
-    private String convertLegacyHex(String input) {
-        Matcher m = LEGACY_HEX.matcher(input);
-        return m.replaceAll(mr -> "<#" + mr.group(1) + ">");
-    }
-
-    /**
-     * Parsuje libovolný MiniMessage řetězec (pro dynamicky sestavené zprávy).
+     * Parsuje libovolný MiniMessage string (pro dynamicky sestavené texty).
      */
     public Component parse(String miniMessage) {
-        return MM.deserialize(convertLegacyHex(miniMessage));
+        return MM.deserialize(convertHex(miniMessage));
     }
 
     /**
-     * Serializuje Component zpět na MiniMessage řetězec.
+     * Konvertuje &#RRGGBB → <#RRGGBB> pro správné zpracování přes MiniMessage.
+     * Bez tohoto kroku se tagy zobrazují jako plain text v Minecraftu.
      */
-    public String serialize(Component component) {
-        return MM.serialize(component);
+    public static String convertHex(String input) {
+        if (input == null) return "";
+        return LEGACY_HEX.matcher(input).replaceAll(mr -> "<#" + mr.group(1) + ">");
     }
 
     public String getPrefix() { return prefix; }

@@ -26,7 +26,7 @@ public class GameManager {
     private final ChromaWars plugin;
     private final MiniMessage mm = MiniMessage.miniMessage();
 
-    private GameState gameState    = GameState.WAITING;
+    private GameState gameState   = GameState.WAITING;
     private ArenaData currentArena = null;
     private int       lobbyCountdown;
     private int       gameTimeLeft;
@@ -41,21 +41,26 @@ public class GameManager {
     // UUID → teamId (hráči ve hře)
     private final Map<UUID, String> inGamePlayers = new ConcurrentHashMap<>();
 
+    // ── Anti-spam: track zda jsme již odeslali "čekáme" zprávu ───────────
+    // Posíláme ji pouze při změně stavu (připojení/odpojení hráče)
+    private int lastOnlineCount = -1;
+
     public GameManager(ChromaWars plugin) {
-        this.plugin          = plugin;
-        this.lobbyCountdown  = plugin.getConfigManager().getLobbyCountdown();
-        this.gameTimeLeft    = plugin.getConfigManager().getGameDuration();
+        this.plugin         = plugin;
+        this.lobbyCountdown = plugin.getConfigManager().getLobbyCountdown();
+        this.gameTimeLeft   = plugin.getConfigManager().getGameDuration();
 
         plugin.getScoreboardManager().startLobbyTask();
         startLobbyCountdown();
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  LOBBY ODPOČET
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  LOBBY ODPOČET – BEZ SPAMU
+    // ══════════════════════════════════════════════════════════════════════
 
     private void startLobbyCountdown() {
         lobbyCountdown = plugin.getConfigManager().getLobbyCountdown();
+        lastOnlineCount = -1; // reset anti-spam tracku
         cancelTask(lobbyCountdownTask);
 
         lobbyCountdownTask = new BukkitRunnable() {
@@ -64,21 +69,32 @@ public class GameManager {
                 int min    = plugin.getConfigManager().getMinPlayersToStart();
 
                 if (online < min) {
+                    // Reset odpočtu
                     lobbyCountdown = plugin.getConfigManager().getLobbyCountdown();
-                    broadcastToLobby("lobby.waiting",
-                            "current", String.valueOf(online),
-                            "min",     String.valueOf(min));
+
+                    // ── Zprávu posíláme POUZE pokud se počet hráčů změnil ──
+                    // Tím eliminujeme spam každou sekundu
+                    if (online != lastOnlineCount) {
+                        lastOnlineCount = online;
+                        broadcastToLobby("lobby.waiting",
+                                "current", String.valueOf(online),
+                                "min",     String.valueOf(min));
+                    }
                     return;
                 }
 
-                if (lobbyCountdown == 10 || lobbyCountdown == 5
-                        || lobbyCountdown == 3  || lobbyCountdown == 2
-                        || lobbyCountdown == 1) {
-                    showCountdownTitle(lobbyCountdown);
-                }
-                if (lobbyCountdown == 30 || lobbyCountdown == 10) {
+                // Máme dost hráčů – reset anti-spam tracku
+                lastOnlineCount = -1;
+
+                // Odpočítávání – broadcast jen na klíčových hodnotách
+                if (lobbyCountdown == 30 || lobbyCountdown == 10 || lobbyCountdown == 5) {
                     broadcastToLobby("lobby.countdown",
                             "time", String.valueOf(lobbyCountdown));
+                }
+
+                // Title na posledních 5 sekundách
+                if (lobbyCountdown <= 5 && lobbyCountdown > 0) {
+                    showCountdownTitle(lobbyCountdown);
                 }
 
                 if (lobbyCountdown <= 0) {
@@ -92,9 +108,9 @@ public class GameManager {
         }.runTaskTimer(plugin, 20L, 20L);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  START HRY
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     private void startGame() {
         gameState = GameState.STARTING;
@@ -125,7 +141,6 @@ public class GameManager {
         resetArena(winner);
         distributePlayersToTeams(eligible);
         prepareAndTeleportPlayers();
-
         showStartTitle();
 
         plugin.getScoreboardManager().stopLobbyTask();
@@ -136,9 +151,9 @@ public class GameManager {
         startGameTick();
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  HERNÍ TICK
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     private void startGameTick() {
         cancelTask(gameTickTask);
@@ -178,9 +193,9 @@ public class GameManager {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  KONEC HRY
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     public void endGame(String winnerTeamId) {
         if (gameState == GameState.ENDING) return;
@@ -274,21 +289,16 @@ public class GameManager {
     private void cleanupAfterGame() {
         inGamePlayers.clear();
         teamBlockCounts.clear();
-
-        if (plugin.getTurfListener() != null) {
-            plugin.getTurfListener().clearAllCaches();
-        }
-
+        if (plugin.getTurfListener() != null) plugin.getTurfListener().clearAllCaches();
         currentArena = null;
         gameState    = GameState.WAITING;
-
         plugin.getScoreboardManager().startLobbyTask();
         startLobbyCountdown();
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  PŘÍPRAVA HRÁČŮ
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  PŘÍPRAVA HRÁČŮ + SPAWN SYSTÉM
+    // ══════════════════════════════════════════════════════════════════════
 
     private void distributePlayersToTeams(List<Player> players) {
         SessionManager sm      = plugin.getSessionManager();
@@ -298,12 +308,10 @@ public class GameManager {
         for (Player p : players) {
             PlayerSession session = sm.getSession(p);
             if (session == null) continue;
-
             if (!session.isInTeam()) {
                 session.setTeamId(teamIds.get(idx % teamIds.size()));
                 idx++;
             }
-
             inGamePlayers.put(p.getUniqueId(), session.getTeamId());
             session.setState(PlayerSession.State.PLAYING);
         }
@@ -317,6 +325,7 @@ public class GameManager {
             PlayerSession session = plugin.getSessionManager().getSession(p);
             if (session == null) continue;
 
+            // Záloha
             session.setSavedInventory(p.getInventory().getContents().clone());
             session.setSavedGameMode(p.getGameMode());
             session.setSavedLocation(p.getLocation());
@@ -328,13 +337,91 @@ public class GameManager {
             p.setSaturation(20);
 
             giveTeamArmor(p, entry.getValue());
-            teleportToRandomArenaSpot(p);
+
+            // Teleport: preferujeme nastavený team spawn, jinak náhodné místo
+            Location spawnLoc = getTeamSpawnLocation(currentArena.name(), entry.getValue());
+            if (spawnLoc != null) {
+                p.teleport(spawnLoc);
+            } else {
+                teleportToRandomArenaSpot(p);
+            }
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ── Team spawn gettery ────────────────────────────────────────────────
+
+    /**
+     * Vrátí nastavený spawn pro tým v dané aréně.
+     * Čte z config: arenas.<arenaName>.spawns.<teamId>.x/y/z/yaw/pitch
+     * Pokud není nastaven, vrátí null.
+     */
+    public Location getTeamSpawnLocation(String arenaName, String teamId) {
+        ConfigurationSection sec = plugin.getConfigManager().getRawConfig()
+                .getConfigurationSection("arenas." + arenaName + ".spawns." + teamId);
+        if (sec == null) return null;
+
+        String worldName = plugin.getConfigManager().getRawConfig()
+                .getString("arenas." + arenaName + ".world", "world");
+        World world = Bukkit.getWorld(worldName);
+        if (world == null) return null;
+
+        double x     = sec.getDouble("x");
+        double y     = sec.getDouble("y");
+        double z     = sec.getDouble("z");
+        float  yaw   = (float) sec.getDouble("yaw", 0);
+        float  pitch = (float) sec.getDouble("pitch", 0);
+
+        return new Location(world, x, y, z, yaw, pitch);
+    }
+
+    /**
+     * Uloží team spawn do configu.
+     * Volá CommandManager při /chroma arena setspawn <teamId>
+     */
+    public void saveTeamSpawn(String arenaName, String teamId, Location loc) {
+        String path = "arenas." + arenaName + ".spawns." + teamId + ".";
+        plugin.getConfigManager().getRawConfig().set(path + "x",     loc.getX());
+        plugin.getConfigManager().getRawConfig().set(path + "y",     loc.getY());
+        plugin.getConfigManager().getRawConfig().set(path + "z",     loc.getZ());
+        plugin.getConfigManager().getRawConfig().set(path + "yaw",   (double) loc.getYaw());
+        plugin.getConfigManager().getRawConfig().set(path + "pitch", (double) loc.getPitch());
+        plugin.saveConfig();
+    }
+
+    // ── Teleport na náhodné místo ─────────────────────────────────────────
+
+    public void teleportToRandomArenaSpot(Player player) {
+        if (currentArena == null || currentArena.getWorld() == null) return;
+        Random rng = new Random();
+        int rangeX = currentArena.maxX() - currentArena.minX();
+        int rangeZ = currentArena.maxZ() - currentArena.minZ();
+        int x = currentArena.minX() + (rangeX > 0 ? rng.nextInt(rangeX + 1) : 0);
+        int z = currentArena.minZ() + (rangeZ > 0 ? rng.nextInt(rangeZ + 1) : 0);
+        int y = currentArena.minY() + 2;
+        player.teleport(new Location(currentArena.getWorld(), x + 0.5, y, z + 0.5));
+    }
+
+    // ── Reset arény ───────────────────────────────────────────────────────
+
+    private void resetArena(ArenaData arena) {
+        World world = arena.getWorld();
+        if (world == null) return;
+        new BukkitRunnable() {
+            @Override public void run() {
+                for (int x = arena.minX(); x <= arena.maxX(); x++)
+                    for (int y = arena.minY(); y <= arena.maxY(); y++)
+                        for (int z = arena.minZ(); z <= arena.maxZ(); z++) {
+                            Block b = world.getBlockAt(x, y, z);
+                            if (b.getType().name().endsWith("_CONCRETE"))
+                                b.setType(Material.WHITE_CONCRETE, false);
+                        }
+            }
+        }.runTask(plugin);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     //  BRNĚNÍ
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     private void giveTeamArmor(Player player, String teamId) {
         TeamConfig team = plugin.getConfigManager().getTeam(teamId);
@@ -350,13 +437,12 @@ public class GameManager {
             armorColor = Color.fromRGB(team.color().value() & 0xFFFFFF);
         }
 
-        player.getInventory().setHelmet(coloredArmor(Material.LEATHER_HELMET, armorColor));
+        player.getInventory().setHelmet    (coloredArmor(Material.LEATHER_HELMET,     armorColor));
         player.getInventory().setChestplate(coloredArmor(Material.LEATHER_CHESTPLATE, armorColor));
-        player.getInventory().setLeggings(coloredArmor(Material.LEATHER_LEGGINGS, armorColor));
-        player.getInventory().setBoots(coloredArmor(Material.LEATHER_BOOTS, armorColor));
+        player.getInventory().setLeggings  (coloredArmor(Material.LEATHER_LEGGINGS,   armorColor));
+        player.getInventory().setBoots     (coloredArmor(Material.LEATHER_BOOTS,      armorColor));
     }
 
-    /** Veřejná verze pro CombatListener (respawn). */
     public void giveTeamArmorPublic(Player player, String teamId) {
         giveTeamArmor(player, teamId);
     }
@@ -372,44 +458,9 @@ public class GameManager {
         return item;
     }
 
-    // ── Teleport na náhodné místo v aréně ────────────────────────────────────
-
-    private void teleportToRandomArenaSpot(Player player) {
-        if (currentArena == null || currentArena.getWorld() == null) return;
-        Random rng = new Random();
-        int rangeX = currentArena.maxX() - currentArena.minX();
-        int rangeZ = currentArena.maxZ() - currentArena.minZ();
-        int x = currentArena.minX() + (rangeX > 0 ? rng.nextInt(rangeX + 1) : 0);
-        int z = currentArena.minZ() + (rangeZ > 0 ? rng.nextInt(rangeZ + 1) : 0);
-        int y = currentArena.minY() + 2;
-        player.teleport(new Location(currentArena.getWorld(), x + 0.5, y, z + 0.5));
-    }
-
-    // ── Reset arény ───────────────────────────────────────────────────────────
-
-    private void resetArena(ArenaData arena) {
-        World world = arena.getWorld();
-        if (world == null) return;
-
-        new BukkitRunnable() {
-            @Override public void run() {
-                for (int x = arena.minX(); x <= arena.maxX(); x++) {
-                    for (int y = arena.minY(); y <= arena.maxY(); y++) {
-                        for (int z = arena.minZ(); z <= arena.maxZ(); z++) {
-                            Block b = world.getBlockAt(x, y, z);
-                            if (b.getType().name().endsWith("_CONCRETE")) {
-                                b.setType(Material.WHITE_CONCRETE, false);
-                            }
-                        }
-                    }
-                }
-            }
-        }.runTask(plugin);
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  BLOKOVÉ POČÍTÁNÍ
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
     public void incrementTeamBlock(String teamId) {
         teamBlockCounts.merge(teamId, 1, Integer::sum);
@@ -417,24 +468,24 @@ public class GameManager {
 
     public void decrementTeamBlock(String teamId) {
         teamBlockCounts.merge(teamId, -1,
-                (current, delta) -> Math.max(0, current + delta));
+                (cur, delta) -> Math.max(0, cur + delta));
     }
 
     public int getTeamBlockCount(String teamId) {
         return teamBlockCounts.getOrDefault(teamId, 0);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     //  GETTERY
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
 
-    public String    getCurrentArenaName()         { return currentArena != null ? currentArena.name() : "–"; }
-    public ArenaData getCurrentArena()             { return currentArena; }
-    public GameState getGameState()                { return gameState; }
-    public boolean   isRunning()                   { return gameState == GameState.RUNNING; }
-    public int       getLobbyCountdown()           { return lobbyCountdown; }
-    public int       getInGamePlayerCount()        { return inGamePlayers.size(); }
-    public Map<UUID, String> getInGamePlayers()    { return Collections.unmodifiableMap(inGamePlayers); }
+    public String    getCurrentArenaName()      { return currentArena != null ? currentArena.name() : "\u2013"; }
+    public ArenaData getCurrentArena()          { return currentArena; }
+    public GameState getGameState()             { return gameState; }
+    public boolean   isRunning()                { return gameState == GameState.RUNNING; }
+    public int       getLobbyCountdown()        { return lobbyCountdown; }
+    public int       getInGamePlayerCount()     { return inGamePlayers.size(); }
+    public Map<UUID, String> getInGamePlayers() { return Collections.unmodifiableMap(inGamePlayers); }
 
     public String getFormattedTimeLeft() {
         int m = gameTimeLeft / 60;
@@ -448,18 +499,18 @@ public class GameManager {
         return String.format("%.1f", pct);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    //  TITLE HELPERS
-    // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    //  TITULY
+    // ══════════════════════════════════════════════════════════════════════
 
     private void showStartTitle() {
         ConfigurationSection sec = plugin.getConfigManager().getRawConfig()
                 .getConfigurationSection("messages.game.start-title");
-        String title    = sec != null ? sec.getString("title",    "<bold><gradient:&#FF4444:&#4477FF>CHROMAWARS!</gradient></bold>") : "<bold><gradient:&#FF4444:&#4477FF>CHROMAWARS!</gradient></bold>";
+        String title    = sec != null ? sec.getString("title",    "<bold><gradient:#FF4444:#4477FF>CHROMAWARS!</gradient></bold>") : "<bold><gradient:#FF4444:#4477FF>CHROMAWARS!</gradient></bold>";
         String subtitle = sec != null ? sec.getString("subtitle", "<gray>Obarvi co nejvíce plochy!</gray>") : "<gray>Obarvi co nejvíce plochy!</gray>";
-        int fi = sec != null ? sec.getInt("fade-in", 10) : 10;
-        int st = sec != null ? sec.getInt("stay", 60)    : 60;
-        int fo = sec != null ? sec.getInt("fade-out", 20): 20;
+        int fi = sec != null ? sec.getInt("fade-in",  10) : 10;
+        int st = sec != null ? sec.getInt("stay",     60) : 60;
+        int fo = sec != null ? sec.getInt("fade-out", 20) : 20;
         Title t = buildTitle(title, subtitle, fi, st, fo);
         getIngamePlayers().forEach(p -> p.showTitle(t));
     }
@@ -507,21 +558,27 @@ public class GameManager {
 
     private Title buildTitle(String title, String subtitle, int fi, int st, int fo) {
         return Title.title(
-                mm.deserialize(title),
-                mm.deserialize(subtitle),
+                parseMM(title),
+                parseMM(subtitle),
                 Title.Times.times(
                         Duration.ofMillis(fi * 50L),
                         Duration.ofMillis(st * 50L),
                         Duration.ofMillis(fo * 50L)));
     }
 
-    // ── Broadcast helpers ─────────────────────────────────────────────────────
+    /** MiniMessage parse s automatickou konverzí &#RRGGBB → <#RRGGBB> */
+    private net.kyori.adventure.text.Component parseMM(String input) {
+        if (input == null || input.isBlank()) return net.kyori.adventure.text.Component.empty();
+        String converted = input.replaceAll("&#([A-Fa-f0-9]{6})", "<#$1>");
+        return mm.deserialize(converted);
+    }
+
+    // ── Broadcast helpers ─────────────────────────────────────────────────
 
     private void broadcastToLobby(String key, String... placeholders) {
         SessionManager sm = plugin.getSessionManager();
         for (Player p : Bukkit.getOnlinePlayers()) {
-            if (sm == null) { plugin.getMessageManager().send(p, key, placeholders); continue; }
-            PlayerSession s = sm.getSession(p);
+            PlayerSession s = sm != null ? sm.getSession(p) : null;
             if (s == null || s.isInLobby()) plugin.getMessageManager().send(p, key, placeholders);
         }
     }
